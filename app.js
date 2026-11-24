@@ -5,7 +5,10 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut,
-  onAuthStateChanged
+  onAuthStateChanged,
+  deleteUser,
+  EmailAuthProvider,
+  reauthenticateWithCredential
 } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js";
 
 import {
@@ -64,7 +67,6 @@ const chatList = document.querySelector(".chat-list");
 const chatHeaderName = document.querySelector(".chat-header b");
 const chatHeaderAvatar = document.querySelector(".chat-header .avatar");
 
-// PROFILE ELEMENTS
 const myProfile = document.querySelector("#myProfile");
 const profileModal = document.querySelector("#profileModal");
 const closeProfile = document.querySelector("#closeProfile");
@@ -98,6 +100,47 @@ let searchRequest = 0;
 let activeRoom = null;
 
 let typingWriteQueue = Promise.resolve();
+let authInitialized = false;
+
+// SPLASH SCREEN
+function hideSplash() {
+  if (splashScreen) {
+    splashScreen.classList.add("hide");
+  }
+}
+
+// CLEAN UP LISTENERS
+function stopAllListeners() {
+  [
+    "stopMessages",
+    "stopPinnedMessage",
+    "stopPresence",
+    "stopTyping",
+    "stopPeerPresence"
+  ].forEach(name => {
+    const listener = {
+      stopMessages,
+      stopPinnedMessage,
+      stopPresence,
+      stopTyping,
+      stopPeerPresence
+    }[name];
+
+    if (listener) {
+      try {
+        listener();
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    if (name === "stopMessages") stopMessages = null;
+    if (name === "stopPinnedMessage") stopPinnedMessage = null;
+    if (name === "stopPresence") stopPresence = null;
+    if (name === "stopTyping") stopTyping = null;
+    if (name === "stopPeerPresence") stopPeerPresence = null;
+  });
+}
 
 // PINNED MESSAGE PATH
 function getPinnedMessagePath() {
@@ -140,13 +183,11 @@ function setTyping(isTyping) {
     return Promise.resolve();
   }
 
-  // Capture the room path immediately
   const typingPath =
     `privateChats/${activeRoom.id}/typing/${currentUser.uid}`;
 
   const typingRef = ref(db, typingPath);
 
-  // Keep typing updates in order
   typingWriteQueue = typingWriteQueue
     .catch(() => {})
     .then(() => set(typingRef, Boolean(isTyping)));
@@ -182,6 +223,7 @@ function startPresence() {
         state: "online",
         lastChanged: serverTimestamp()
       });
+
     } catch (error) {
       console.error("Presence Error:", error);
     }
@@ -254,6 +296,16 @@ async function claimUniqueUsername(baseUsername, uid) {
   throw new Error("Could not create a unique username.");
 }
 
+// AUTH BUTTON LOADING
+function setAuthLoading(loading, message = "") {
+  loginBtn.disabled = loading;
+  registerBtn.disabled = loading;
+
+  if (message) {
+    authMessage.textContent = message;
+  }
+}
+
 // AUTH: REGISTER
 registerBtn.onclick = async () => {
   const email = authEmail.value.trim();
@@ -269,15 +321,29 @@ registerBtn.onclick = async () => {
     return;
   }
 
-  try {
-    authMessage.textContent = "Creating account...";
+  setAuthLoading(true, "Creating account...");
 
+  try {
     await createUserWithEmailAndPassword(auth, email, password);
 
     authMessage.textContent = "Account created successfully!";
+
   } catch (error) {
-    console.error(error);
-    authMessage.textContent = error.message;
+    console.error("Register Error:", error);
+
+    authMessage.textContent =
+      error.code === "auth/email-already-in-use"
+        ? "This email is already registered."
+        : error.code === "auth/invalid-email"
+          ? "Invalid email address."
+          : error.code === "auth/weak-password"
+            ? "Password is too weak."
+            : error.message;
+
+    hideSplash();
+
+  } finally {
+    setAuthLoading(false);
   }
 };
 
@@ -291,23 +357,33 @@ loginBtn.onclick = async () => {
     return;
   }
 
-  try {
-    authMessage.textContent = "Logging in...";
+  setAuthLoading(true, "Logging in...");
 
+  try {
     await signInWithEmailAndPassword(auth, email, password);
 
     authMessage.textContent = "Login successful!";
+
   } catch (error) {
-    console.error(error);
-    authMessage.textContent = error.message;
+    console.error("Login Error:", error);
+
+    authMessage.textContent =
+      error.code === "auth/invalid-credential" ||
+      error.code === "auth/user-not-found" ||
+      error.code === "auth/wrong-password"
+        ? "Incorrect email or password."
+        : error.message;
+
+    hideSplash();
+
+  } finally {
+    setAuthLoading(false);
   }
 };
 
 // AUTH STATE
 onAuthStateChanged(auth, async user => {
   currentUser = user;
-
-  splashScreen.classList.remove("hide");
 
   try {
     if (user) {
@@ -337,59 +413,55 @@ onAuthStateChanged(auth, async user => {
       });
 
       setActiveChat("");
-
       appScreen.classList.remove("mobile-chat-open");
+
+      authMessage.textContent = "";
 
     } else {
       authScreen.style.display = "flex";
       appScreen.style.display = "none";
 
-      if (stopMessages) {
-        stopMessages();
-        stopMessages = null;
-      }
-
-      if (stopPinnedMessage) {
-        stopPinnedMessage();
-        stopPinnedMessage = null;
-      }
-
-      if (stopPresence) {
-        stopPresence();
-        stopPresence = null;
-      }
-
-      if (stopTyping) {
-        stopTyping();
-        stopTyping = null;
-      }
-
-      if (stopPeerPresence) {
-        stopPeerPresence();
-        stopPeerPresence = null;
-      }
+      stopAllListeners();
 
       closeMessageMenu();
 
       activeRoom = null;
       currentProfile = null;
       pendingPinMessage = null;
+      replyingTo = null;
 
       searchResults.innerHTML = "";
       userSearch.value = "";
       chatList.innerHTML = "";
+
+      messagesArea.querySelectorAll(".message").forEach(message => {
+        message.remove();
+      });
+
+      profileModal.classList.remove("show");
     }
 
   } catch (error) {
     console.error("App Load Error:", error);
-    alert("Could not load app: " + error.message);
+
+    authScreen.style.display = "flex";
+    appScreen.style.display = "none";
+
+    authMessage.textContent =
+      "Could not load app: " + error.message;
+
+  } finally {
+    authInitialized = true;
+    hideSplash();
   }
 });
 
-// HIDE SPLASH SCREEN
+// SPLASH FALLBACK
 setTimeout(() => {
-  splashScreen.classList.add("hide");
-}, 2000);
+  if (!authInitialized) {
+    hideSplash();
+  }
+}, 5000);
 
 // LOGOUT
 logoutBtn.onclick = async () => {
@@ -397,6 +469,7 @@ logoutBtn.onclick = async () => {
     await setTyping(false);
     await signOut(auth);
     profileModal.classList.remove("show");
+
   } catch (error) {
     alert(error.message);
   }
@@ -432,6 +505,7 @@ async function loadProfile() {
 
     if (!/^[a-z0-9_]{3,20}$/.test(username)) {
       username = await claimUniqueUsername(profile.name || "user", uid);
+
     } else {
       const claimed = await claimUsername(username, uid);
 
@@ -478,6 +552,7 @@ function updateProfileUI(profile) {
       const img = document.createElement("img");
       img.src = profile.photo;
       avatar.appendChild(img);
+
     } else {
       avatar.textContent = name.charAt(0).toUpperCase();
     }
@@ -543,6 +618,7 @@ saveProfile.onclick = async () => {
   } catch (error) {
     console.error(error);
     alert("Could not save profile: " + error.message);
+
   } finally {
     saveProfile.disabled = false;
     saveProfile.textContent = "Save Changes";
@@ -559,6 +635,87 @@ cancelEdit.onclick = () => {
   editForm.style.display = "none";
 };
 
+// COMPRESS PROFILE PHOTO
+async function compressProfilePhoto(file) {
+  const imageUrl = URL.createObjectURL(file);
+
+  try {
+    const image = new Image();
+
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = () => reject(
+        new Error("Could not read this image.")
+      );
+      image.src = imageUrl;
+    });
+
+    let width = image.naturalWidth;
+    let height = image.naturalHeight;
+
+    const maxDimension = 900;
+
+    if (width > maxDimension || height > maxDimension) {
+      const ratio = Math.min(
+        maxDimension / width,
+        maxDimension / height
+      );
+
+      width = Math.round(width * ratio);
+      height = Math.round(height * ratio);
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      throw new Error("Image compression is not supported.");
+    }
+
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
+
+    let quality = 0.85;
+    let result = null;
+
+    for (let i = 0; i < 8; i++) {
+      result = await new Promise(resolve => {
+        canvas.toBlob(resolve, "image/jpeg", quality);
+      });
+
+      if (!result) {
+        throw new Error("Image compression failed.");
+      }
+
+      if (result.size <= 450 * 1024) break;
+
+      quality -= 0.1;
+    }
+
+    if (!result || result.size > 450 * 1024) {
+      throw new Error("Image is too large to compress.");
+    }
+
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(
+        new Error("Could not read compressed image.")
+      );
+
+      reader.readAsDataURL(result);
+    });
+
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+}
+
 // PROFILE PHOTO
 changePhotoBtn.onclick = () => photoInput.click();
 
@@ -567,45 +724,42 @@ photoInput.onchange = async () => {
 
   if (!file || !currentUser) return;
 
-  if (!file.type.startsWith("image/")) {
-    alert("Please select an image.");
-    return;
-  }
-
-  if (file.size > 500 * 1024) {
-    alert("Please choose an image smaller than 500 KB.");
-    return;
-  }
-
-  const reader = new FileReader();
-
-  reader.onload = async () => {
-    try {
-      const profileRef = ref(db, `users/${currentUser.uid}/profile`);
-      const snapshot = await get(profileRef);
-      const profile = snapshot.val();
-
-      if (!profile) {
-        alert("Profile not found. Please reload the app.");
-        return;
-      }
-
-      profile.photo = reader.result;
-
-      await set(profileRef, profile);
-
-      currentProfile = profile;
-      updateProfileUI(profile);
-
-      alert("Profile photo updated!");
-
-    } catch (error) {
-      console.error(error);
-      alert("Photo could not be saved: " + error.message);
+  try {
+    if (!file.type.startsWith("image/")) {
+      throw new Error("Please select an image.");
     }
-  };
 
-  reader.readAsDataURL(file);
+    changePhotoBtn.disabled = true;
+    changePhotoBtn.textContent = "Compressing...";
+
+    const compressedPhoto = await compressProfilePhoto(file);
+
+    const profileRef = ref(db, `users/${currentUser.uid}/profile`);
+    const snapshot = await get(profileRef);
+    const profile = snapshot.val();
+
+    if (!profile) {
+      throw new Error("Profile not found. Please reload the app.");
+    }
+
+    profile.photo = compressedPhoto;
+
+    await set(profileRef, profile);
+
+    currentProfile = profile;
+    updateProfileUI(profile);
+
+    alert("Profile photo updated!");
+
+  } catch (error) {
+    console.error(error);
+    alert("Photo could not be saved: " + error.message);
+
+  } finally {
+    photoInput.value = "";
+    changePhotoBtn.disabled = false;
+    changePhotoBtn.textContent = "Change Profile Photo";
+  }
 };
 
 // PROFILE MODAL
@@ -693,12 +847,12 @@ function renderChatPreview(item) {
   if (!item) return;
 
   const preview = item.querySelector(".last-message");
-
   if (!preview) return;
 
   if (item.dataset.isTyping === "true") {
     preview.textContent = "Typing...";
     preview.classList.add("is-typing");
+
   } else {
     preview.textContent =
       item.dataset.lastMessage || (
@@ -719,7 +873,6 @@ function updateLastMessage(roomId, message) {
   if (!chatItem) return;
 
   chatItem.dataset.lastMessage = message || "No messages yet";
-
   renderChatPreview(chatItem);
 }
 
@@ -744,11 +897,9 @@ async function refreshLastMessage(roomId, roomPath, roomType) {
       return (b.createdAt || 0) - (a.createdAt || 0);
     });
 
-    const lastMessage = messages[0];
-
     updateLastMessage(
       roomId,
-      lastMessage?.text || "No messages yet"
+      messages[0]?.text || "No messages yet"
     );
 
   } catch (error) {
@@ -779,7 +930,9 @@ async function loadUserChats() {
   const chats = snapshot.val();
 
   Object.entries(chats).forEach(([roomId, chat]) => {
-    if (roomId === "activeRoom" || !chat || typeof chat !== "object") return;
+    if (roomId === "activeRoom" || !chat || typeof chat !== "object") {
+      return;
+    }
 
     const item = addChatToList(
       roomId,
@@ -811,7 +964,6 @@ async function loadUserChats() {
 function listenAllChatPresence() {
   chatList.querySelectorAll(".chat").forEach(item => {
     const uid = item.dataset.peerUid;
-
     if (!uid) return;
 
     const presenceRef = ref(db, `presence/${uid}`);
@@ -835,11 +987,11 @@ function listenAllChatTyping() {
   chatList.querySelectorAll(".chat").forEach(item => {
     const uid = item.dataset.peerUid;
     const roomId = item.dataset.roomId;
-    const roomType = item.dataset.roomType;
 
-    if (!uid || !roomId || roomType !== "private") return;
+    if (!uid || !roomId || item.dataset.roomType !== "private") {
+      return;
+    }
 
-    // LISTEN PEER TYPING
     const typingRef = ref(
       db,
       `privateChats/${roomId}/typing/${uid}`
@@ -859,7 +1011,6 @@ function listenAllChatTyping() {
       }
     });
 
-    // LISTEN LAST MESSAGE
     const messagesRef = ref(
       db,
       `privateChats/${roomId}/messages`
@@ -888,7 +1039,6 @@ function listenAllChatTyping() {
 
 // OPEN GENERAL CHAT
 function openGeneralChat() {
-  // Clear typing status in previous private chat
   setTyping(false);
 
   activeRoom = {
@@ -962,6 +1112,7 @@ function listenPeerPresence(uid) {
 
     if (data?.state === "online") {
       status.textContent = "Online";
+
     } else if (data?.lastChanged) {
       status.textContent =
         "Last seen at " +
@@ -969,6 +1120,7 @@ function listenPeerPresence(uid) {
           hour: "2-digit",
           minute: "2-digit"
         });
+
     } else {
       status.textContent = "Last seen unavailable";
     }
@@ -1033,7 +1185,6 @@ function listenPeerTyping(uid) {
 async function openPrivateChat(peerUid, peerProfile) {
   if (!currentUser || !peerUid || !peerProfile) return;
 
-  // Clear typing status in previous room before switching
   await setTyping(false);
 
   const members = [currentUser.uid, peerUid].sort();
@@ -1082,7 +1233,6 @@ async function openPrivateChat(peerUid, peerProfile) {
       path: roomPath
     };
 
-    // Remove own typing status if connection disconnects
     const myTypingRef = ref(
       db,
       `privateChats/${roomId}/typing/${currentUser.uid}`
@@ -1109,6 +1259,7 @@ async function openPrivateChat(peerUid, peerProfile) {
       img.style.height = "100%";
       img.style.objectFit = "cover";
       chatHeaderAvatar.appendChild(img);
+
     } else {
       chatHeaderAvatar.textContent =
         (peerProfile.name || "U").charAt(0).toUpperCase();
@@ -1118,7 +1269,7 @@ async function openPrivateChat(peerUid, peerProfile) {
     listenMessages();
 
     await set(
-      ref(db, `userChats/${currentUser.uid}/${activeRoom.id}/unreadCount`),
+      ref(db, `userChats/${currentUser.uid}/${roomId}/unreadCount`),
       0
     );
 
@@ -1138,7 +1289,6 @@ async function openPrivateChat(peerUid, peerProfile) {
 // CHAT LIST CLICK
 chatList.addEventListener("click", event => {
   const item = event.target.closest(".chat");
-
   if (!item) return;
 
   if (item.dataset.roomType === "general") {
@@ -1147,16 +1297,13 @@ chatList.addEventListener("click", event => {
   }
 
   const peerUid = item.dataset.peerUid;
-
   if (!peerUid) return;
 
-  const peerProfile = {
+  openPrivateChat(peerUid, {
     name: item.dataset.name,
     username: item.dataset.username,
     photo: item.dataset.photo
-  };
-
-  openPrivateChat(peerUid, peerProfile);
+  });
 });
 
 // USER SEARCH
@@ -1211,6 +1358,7 @@ userSearch.addEventListener("input", async () => {
       img.style.height = "100%";
       img.style.objectFit = "cover";
       avatar.appendChild(img);
+
     } else {
       avatar.textContent =
         (profile.name || "U").charAt(0).toUpperCase();
@@ -1329,7 +1477,9 @@ function listenMessages() {
   const stopAdded = onChildAdded(messagesRef, snapshot => {
     const data = snapshot.val();
 
-    if (!data || typeof data.text !== "string" || !currentUser) return;
+    if (!data || typeof data.text !== "string" || !currentUser) {
+      return;
+    }
 
     const item = document.createElement("div");
     item.classList.add("message");
@@ -1456,7 +1606,6 @@ function listenMessages() {
     stopRemoved();
   };
 
-  // LISTEN PINNED MESSAGE
   if (stopPinnedMessage) {
     stopPinnedMessage();
     stopPinnedMessage = null;
@@ -1510,7 +1659,6 @@ async function sendMessage() {
   if (!activeRoom || !currentUser) return;
 
   const text = messageInput.value.trim();
-
   if (!text) return;
 
   try {
@@ -1554,10 +1702,7 @@ async function sendMessage() {
 
         const peerActiveRoomSnapshot = await get(peerActiveRoomRef);
 
-        const peerIsViewingThisChat =
-          peerActiveRoomSnapshot.val() === activeRoom.id;
-
-        if (!peerIsViewingThisChat) {
+        if (peerActiveRoomSnapshot.val() !== activeRoom.id) {
           await runTransaction(unreadRef, count => {
             return (Number(count) || 0) + 1;
           });
@@ -1593,17 +1738,12 @@ messageInput.addEventListener("keydown", event => {
 messageInput.addEventListener("input", () => {
   if (!activeRoom || activeRoom.type !== "private") return;
 
-  const hasText = messageInput.value.trim().length > 0;
-
-  setTyping(hasText);
+  setTyping(messageInput.value.trim().length > 0);
 });
 
-// STOP TYPING WHEN INPUT LOSES FOCUS
 messageInput.addEventListener("blur", () => {
   setTyping(false);
 });
-
-console.log("PankieChat App Loaded");
 
 // SEARCH WINDOW
 const searchTrigger = document.getElementById("searchTrigger");
@@ -1700,6 +1840,7 @@ copyAction.onclick = async () => {
   try {
     await navigator.clipboard.writeText(selectedMessage.text);
     closeMessageMenu();
+
   } catch (error) {
     console.error("Copy Error:", error);
   }
@@ -1714,24 +1855,20 @@ const confirmPinBtn = document.getElementById("confirmPinBtn");
 pinAction.onclick = () => {
   if (!selectedMessage || !activeRoom) return;
 
-  // Save selected message before closing menu
   pendingPinMessage = {
     ...selectedMessage,
     pinPath: getPinnedMessagePath()
   };
 
   closeMessageMenu();
-
   pinConfirmModal.style.display = "flex";
 };
 
-// CANCEL PIN
 cancelPinBtn.onclick = () => {
   pinConfirmModal.style.display = "none";
   pendingPinMessage = null;
 };
 
-// CONFIRM PIN
 confirmPinBtn.onclick = async () => {
   if (!pendingPinMessage || !currentUser) return;
 
@@ -1774,6 +1911,7 @@ if (unpinMessageBtn) {
 
     try {
       await remove(ref(db, pinPath));
+
     } catch (error) {
       console.error("Unpin Error:", error);
     }
@@ -1785,7 +1923,6 @@ document.getElementById("forwardAction").onclick = () => {
   if (!selectedMessage || !currentUser) return;
 
   const message = { ...selectedMessage };
-
   closeMessageMenu();
 
   document.getElementById("forwardChatModal")?.remove();
@@ -1797,9 +1934,7 @@ document.getElementById("forwardAction").onclick = () => {
     <div class="forward-box">
       <h3>Forward Message</h3>
       <p class="forward-subtitle">Choose a chat</p>
-
       <div class="forward-chat-list"></div>
-
       <div class="forward-buttons">
         <button class="forward-cancel" type="button">Cancel</button>
         <button class="forward-send" type="button" disabled>Send</button>
@@ -1815,7 +1950,6 @@ document.getElementById("forwardAction").onclick = () => {
 
   let selectedChat = null;
 
-  // SHOW EXISTING CHATS
   chatList.querySelectorAll(".chat").forEach(chat => {
     const roomId = chat.dataset.roomId;
     const roomType = chat.dataset.roomType;
@@ -1871,12 +2005,8 @@ document.getElementById("forwardAction").onclick = () => {
     list.appendChild(empty);
   }
 
-  // CANCEL
-  cancelBtn.onclick = () => {
-    modal.remove();
-  };
+  cancelBtn.onclick = () => modal.remove();
 
-  // SEND FORWARDED MESSAGE
   sendBtn.onclick = async () => {
     if (!selectedChat) return;
 
@@ -1902,12 +2032,10 @@ document.getElementById("forwardAction").onclick = () => {
       await set(newMessageRef, forwardedData);
 
       updateLastMessage(selectedChat.id, message.text);
-
       modal.remove();
 
     } catch (error) {
       console.error("Forward Error:", error);
-
       alert("Forward failed: " + error.message);
 
       sendBtn.disabled = false;
@@ -1919,7 +2047,6 @@ document.getElementById("forwardAction").onclick = () => {
 // FORWARD MODAL CSS
 if (!document.getElementById("forwardModalStyles")) {
   const style = document.createElement("style");
-
   style.id = "forwardModalStyles";
 
   style.textContent = `
@@ -2121,7 +2248,6 @@ function ensureReactionPicker() {
 
   if (!document.getElementById("messageActionExtraStyles")) {
     const style = document.createElement("style");
-
     style.id = "messageActionExtraStyles";
 
     style.textContent = `
@@ -2207,7 +2333,6 @@ if (deleteAction) {
     if (!selectedMessage || !currentUser) return;
 
     const message = { ...selectedMessage };
-
     closeMessageMenu();
 
     document.getElementById("deleteConfirmModal")?.remove();
@@ -2265,10 +2390,8 @@ if (deleteAction) {
           message.roomPath.startsWith("privateChats/") &&
           latestMessage.status !== "seen"
         ) {
-          const roomId = message.roomId;
-
           const peerSnap = await get(
-            ref(db, `userChats/${currentUser.uid}/${roomId}/peerUid`)
+            ref(db, `userChats/${currentUser.uid}/${message.roomId}/peerUid`)
           );
 
           const peerUid = peerSnap.val();
@@ -2281,7 +2404,7 @@ if (deleteAction) {
           if (unreadOwner) {
             const unreadRef = ref(
               db,
-              `userChats/${unreadOwner}/${roomId}/unreadCount`
+              `userChats/${unreadOwner}/${message.roomId}/unreadCount`
             );
 
             await runTransaction(unreadRef, count => {
@@ -2294,7 +2417,6 @@ if (deleteAction) {
 
       } catch (error) {
         console.error("Delete Error:", error);
-
         alert("Delete failed: " + error.message);
 
         deleteBtn.disabled = false;
@@ -2370,5 +2492,132 @@ if (!document.getElementById("deleteConfirmStyles")) {
 
   document.head.appendChild(style);
 }
+
+// CREATE DELETE ACCOUNT BUTTON AUTOMATICALLY
+const deleteAccountBtn = document.createElement("button");
+
+deleteAccountBtn.id = "deleteAccountBtn";
+deleteAccountBtn.type = "button";
+deleteAccountBtn.className = "delete-account-btn";
+deleteAccountBtn.textContent = "Delete Account";
+
+editProfileBtn.insertAdjacentElement("afterend", deleteAccountBtn);
+
+// DELETE ACCOUNT BUTTON STYLE
+if (!document.getElementById("deleteAccountStyles")) {
+  const style = document.createElement("style");
+  style.id = "deleteAccountStyles";
+
+  style.textContent = `
+    .delete-account-btn {
+      display: block;
+      width: 100%;
+      margin-top: 12px;
+      padding: 12px;
+      border: none;
+      border-radius: 12px;
+      background: #ef4444;
+      color: white;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .delete-account-btn:hover {
+      background: #dc2626;
+    }
+
+    .delete-account-btn:disabled {
+      opacity: .6;
+      cursor: not-allowed;
+    }
+  `;
+
+  document.head.appendChild(style);
+}
+
+// DELETE ACCOUNT
+deleteAccountBtn.onclick = async () => {
+  if (!currentUser) return;
+
+  const confirmed = confirm(
+    "Delete your account permanently? This action cannot be undone."
+  );
+
+  if (!confirmed) return;
+
+  const password = prompt(
+    "Enter your account password to confirm deletion:"
+  );
+
+  if (!password) return;
+
+  deleteAccountBtn.disabled = true;
+  deleteAccountBtn.textContent = "Deleting...";
+
+  try {
+    const user = currentUser;
+    const uid = user.uid;
+
+    if (!user.email) {
+      throw new Error("This account has no email address.");
+    }
+
+    // REAUTHENTICATE
+    const credential = EmailAuthProvider.credential(
+      user.email,
+      password
+    );
+
+    await reauthenticateWithCredential(user, credential);
+
+    // GET CURRENT USERNAME
+    const profileSnapshot = await get(
+      ref(db, `users/${uid}/profile`)
+    );
+
+    const username = cleanUsername(
+      profileSnapshot.val()?.username || currentProfile?.username || ""
+    );
+
+    // RELEASE USERNAME ONLY IF OWNED BY THIS USER
+    if (username) {
+      await releaseUsername(username, uid);
+    }
+
+    // REMOVE ONLY THIS USER'S PERSONAL DATA
+    // Shared private chat rooms are intentionally preserved.
+    await update(ref(db), {
+      [`users/${uid}`]: null,
+      [`userChats/${uid}`]: null,
+      [`presence/${uid}`]: null
+    });
+
+    // DELETE FIREBASE AUTH ACCOUNT
+    await deleteUser(user);
+
+    profileModal.classList.remove("show");
+
+    alert("Your account has been deleted successfully.");
+
+  } catch (error) {
+    console.error("Account Delete Error:", error);
+
+    if (error.code === "auth/wrong-password" ||
+        error.code === "auth/invalid-credential") {
+      alert("Incorrect password. Account was not deleted.");
+
+    } else if (error.code === "auth/requires-recent-login") {
+      alert("Please log in again, then try deleting your account.");
+
+    } else {
+      alert("Account deletion failed: " + error.message);
+    }
+
+  } finally {
+    deleteAccountBtn.disabled = false;
+    deleteAccountBtn.textContent = "Delete Account";
+  }
+};
 
 console.log("PankieChat App Loaded");
