@@ -18,6 +18,7 @@ import {
   set,
   get,
   update,
+  remove,
   runTransaction,
   onDisconnect,
   serverTimestamp
@@ -83,6 +84,23 @@ let currentUser = null;
 let currentProfile = null;
 let stopMessages = null;
 let replyingTo = null;
+let selectedMessage = null;
+
+const messageActionMenu = document.getElementById("messageActionMenu");
+
+function closeMessageMenu() {
+  messageActionMenu.style.display = "none";
+  selectedMessage = null;
+}
+
+document.addEventListener("click", event => {
+  if (
+    !event.target.closest(".message-action-menu") &&
+    !event.target.closest(".message")
+  ) {
+    closeMessageMenu();
+  }
+});
 let activeRoom = {
   type: "general",
   id: "general",
@@ -1161,40 +1179,41 @@ if (data.replyTo) {
       });
 
     item.append(messageText, time);
-    // REPLY MESSAGE
+    // MESSAGE CLICK ACTION MENU
+item.addEventListener("click", event => {
+  event.stopPropagation();
 
-    // REPLY - PC RIGHT CLICK + PHONE LONG PRESS
-
-function startReply() {
-  replyingTo = {
+  selectedMessage = {
     id: snapshot.key,
     text: data.text,
-    senderName: data.senderName || "User"
+    uid: data.uid,
+    senderName: data.senderName || "User",
+    roomPath: activeRoom.path,
+    roomId: activeRoom.id
   };
 
-  document.getElementById("replyText").textContent =
-    `${replyingTo.senderName}: ${replyingTo.text}`;
+  messageActionMenu.style.display = "block";
 
-  document.getElementById("replyPreview").style.display = "flex";
-}
+  const rect = item.getBoundingClientRect();
 
-item.addEventListener("contextmenu", event => {
-  event.preventDefault();
-  startReply();
-});
+  const left = Math.max(
+    10,
+    Math.min(
+      rect.left,
+      window.innerWidth - messageActionMenu.offsetWidth - 10
+    )
+  );
 
-let pressTimer;
+  const top = Math.max(
+    10,
+    Math.min(
+      rect.bottom + 5,
+      window.innerHeight - messageActionMenu.offsetHeight - 10
+    )
+  );
 
-item.addEventListener("touchstart", () => {
-  pressTimer = setTimeout(startReply, 600);
-});
-
-item.addEventListener("touchend", () => {
-  clearTimeout(pressTimer);
-});
-
-item.addEventListener("touchmove", () => {
-  clearTimeout(pressTimer);
+  messageActionMenu.style.left = left + "px";
+  messageActionMenu.style.top = top + "px";
 });
 
     if (isSent) {
@@ -1413,3 +1432,104 @@ if ("serviceWorker" in navigator) {
       .catch(error => console.error("PWA Error:", error));
   });
 }
+// MESSAGE REPLY ACTION
+document.getElementById("replyAction").onclick = () => {
+  if (!selectedMessage) return;
+
+  replyingTo = {
+    id: selectedMessage.id,
+    text: selectedMessage.text,
+    senderName: selectedMessage.senderName
+  };
+
+  document.getElementById("replyText").textContent =
+    `${replyingTo.senderName}: ${replyingTo.text}`;
+
+  document.getElementById("replyPreview").style.display = "flex";
+
+  closeMessageMenu();
+};
+// MESSAGE FORWARD ACTION
+document.getElementById("forwardAction").onclick = async () => {
+  if (!selectedMessage) return;
+
+  const message = selectedMessage;
+
+  const destination = prompt(
+    "Forward to: general သို့မဟုတ် private chat ID"
+  );
+
+  if (!destination) return;
+
+  let targetPath;
+
+  if (destination === "general") {
+    targetPath = "rooms/general/messages";
+  } else {
+    targetPath = `privateChats/${destination}/messages`;
+  }
+
+  try {
+    const newMessageRef = push(ref(db, targetPath));
+
+    await set(newMessageRef, {
+      text: message.text,
+      uid: currentUser.uid,
+      senderName: currentProfile?.name || currentUser.email,
+      createdAt: Date.now(),
+      status: "sent",
+      forwarded: true
+    });
+
+    closeMessageMenu();
+    alert("Message forwarded!");
+  } catch (error) {
+    alert("Forward failed: " + error.message);
+  }
+};
+// MESSAGE REACT ACTION
+document.getElementById("reactAction").onclick = async () => {
+  if (!selectedMessage) return;
+
+  const message = selectedMessage;
+
+  const emoji = prompt("Choose reaction: ❤️ 😂 😮 😢 👍 🔥");
+
+  if (!emoji) return;
+
+  try {
+    await set(
+      ref(
+        db,
+        `${message.roomPath}/${message.id}/reactions/${currentUser.uid}`
+      ),
+      emoji
+    );
+
+    closeMessageMenu();
+  } catch (error) {
+    alert("Reaction failed: " + error.message);
+  }
+};
+// MESSAGE DELETE ACTION
+document.getElementById("deleteAction").onclick = async () => {
+  if (!selectedMessage) return;
+
+  if (selectedMessage.uid !== currentUser.uid) {
+    alert("You can only delete your own messages.");
+    closeMessageMenu();
+    return;
+  }
+
+  if (!confirm("ဒီ message ကို ဖျက်မှာ သေချာလား?")) return;
+
+  try {
+    await remove(
+      ref(db, `${selectedMessage.roomPath}/${selectedMessage.id}`)
+    );
+
+    closeMessageMenu();
+  } catch (error) {
+    alert("Delete failed: " + error.message);
+  }
+};

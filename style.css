@@ -1174,3 +1174,37 @@ input::placeholder {
     max-width: 100%;
   }
 }
+/* MESSAGE ACTION MENU */
+.message-action-menu {
+  display: none;
+  position: fixed;
+  z-index: 9999;
+  min-width: 145px;
+  padding: 6px;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 14px;
+  background: rgba(25, 30, 45, 0.95);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.35);
+}
+
+.message-action-menu button {
+  display: block;
+  width: 100%;
+  padding: 11px 13px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: white;
+  text-align: left;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.message-action-menu button:hover {
+  background: rgba(255,255,255,0.12);
+}
+
+#deleteAction {
+  color: #ff6b6b;
+}
