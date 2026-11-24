@@ -1,0 +1,265 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#080d1b">
+  <title>PankieChat</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#080d1b">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- AUTH SCREEN -->
+  <div class="auth-screen" id="authScreen">
+    <div class="auth-card">
+      <div class="logo">P</div>
+      <h2>Welcome to PankieChat</h2>
+      <p>Connect with your friends</p>
+
+      <input
+        type="email"
+        id="authEmail"
+        placeholder="Email address"
+        autocomplete="email"
+      >
+
+      <input
+        type="password"
+        id="authPassword"
+        placeholder="Password"
+        autocomplete="current-password"
+      >
+
+      <button id="loginBtn">Login</button>
+      <button id="registerBtn">Create Account</button>
+
+      <p id="authMessage"></p>
+    </div>
+  </div>
+
+  <!-- MAIN APP -->
+  <div class="app" id="app">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+
+      <!-- BRAND -->
+      <div class="brand">
+        <div class="logo">P</div>
+        <h2>PankieChat</h2>
+      </div>
+
+     <!-- USER SEARCH -->
+    <div class="search-trigger" id="searchTrigger">
+      <span>⌕</span>
+    </div>
+
+    <div class="search-overlay" id="searchOverlay">
+      <div class="search-window">
+        <div class="search-window-header">
+          <input
+            type="text"
+            id="userSearch"
+            placeholder="Search username..."
+          >
+        <button id="closeSearch">✕</button>
+      </div>
+
+      <div id="searchResults" class="search-results"></div>
+    </div>
+  </div>
+
+      <!-- CHAT SEARCH -->
+      <div class="search">
+        <span>⌕</span>
+        <input
+          type="text"
+          id="chatSearch"
+          placeholder="Search chats..."
+        >
+      </div>
+
+      <div class="section-title">MESSAGES</div>
+
+      <!-- CHAT LIST -->
+      <div class="chat-list">
+        <!-- Chat list will be added here -->
+      </div>
+
+      <!-- MY PROFILE -->
+      <div class="profile" id="myProfile">
+        <div class="avatar green">Y</div>
+
+        <div class="profile-info">
+          <b>Your Profile</b>
+          <p>@yourusername</p>
+
+          <small class="online-status">
+            <span class="status-dot"></span>
+            Online
+          </small>
+        </div>
+
+        <span>⚙</span>
+      </div>
+
+      <button id="logoutBtn" class="logout-btn">
+        Logout
+      </button>
+
+    </aside>
+
+    <!-- CHAT AREA -->
+    <main class="chat-area">
+
+      <!-- CHAT HEADER -->
+      <header class="chat-header">
+        <button id="mobileBackBtn" class="mobile-back-btn">←</button>
+        
+        <div class="avatar blue">P</div>
+
+        <div class="chat-user-info">
+          <b id="chatHeaderName">PankieChat</b>
+          <small id="chatStatus">Offline</small>
+          <small id="typingStatus" class="typing-status"></small>
+        </div>
+
+        <div class="header-actions">⌕　⋮</div>
+      </header>
+
+      <!-- MESSAGES -->
+      <div class="messages">
+        <div class="date">TODAY</div>
+
+        <div
+          class="typing-indicator"
+          id="typingIndicator"
+        >
+          <span></span>
+          <span></span>
+          <span></span>
+          <small>typing...</small>
+        </div>
+      </div>
+
+      <!-- REPLY PREVIEW -->
+      <div id="replyPreview" class="reply-preview" style="display:none;">
+        <div>
+          <small>Replying to</small>
+          <p id="replyText"></p>
+      </div>
+      <button type="button" id="cancelReply">✕</button>
+    </div>
+
+      <!-- MESSAGE INPUT -->
+      <div class="message-input">
+        <button type="button">＋</button>
+
+        <input
+          type="text"
+          placeholder="Write a message..."
+        >
+
+        <button type="button">☺</button>
+
+        <button type="button" class="send">
+          ➤
+        </button>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- PROFILE MODAL -->
+  <div class="profile-modal" id="profileModal">
+    <div class="profile-card">
+
+      <button
+        class="close-profile"
+        id="closeProfile"
+      >
+        ×
+      </button>
+
+      <div
+        class="avatar green profile-avatar"
+        id="profileAvatar"
+      >
+        Y
+      </div>
+
+      <input
+        type="file"
+        id="photoInput"
+        accept="image/*"
+        hidden
+      >
+
+      <button
+        class="edit-photo"
+        id="changePhotoBtn"
+      >
+        Change Profile Photo
+      </button>
+
+      <h2>Your Profile</h2>
+      <p>@yourusername</p>
+
+      <div class="profile-detail">
+        <span>Full Name</span>
+        <b>Your Name</b>
+      </div>
+
+      <div class="profile-detail">
+        <span>Username</span>
+        <b>@yourusername</b>
+      </div>
+
+      <button
+        class="edit-profile"
+        id="editProfileBtn"
+      >
+        Edit Profile
+      </button>
+
+      <!-- EDIT PROFILE FORM -->
+      <div
+        class="edit-form"
+        id="editForm"
+        style="display:none;"
+      >
+        <input
+          type="text"
+          id="editName"
+          placeholder="Your Name"
+        >
+
+        <input
+          type="text"
+          id="editUsername"
+          placeholder="Username"
+        >
+
+        <button id="saveProfile">
+          Save Changes
+        </button>
+
+        <button id="cancelEdit">
+          Cancel
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- JAVASCRIPT -->
+  <script type="module" src="app.js"></script>
+
+</body>
+</html>
