@@ -15,6 +15,13 @@
 </head>
 <body>
 
+  <!-- SPLASH SCREEN -->
+<div id="splashScreen" class="splash-screen">
+  <div class="splash-logo">P</div>
+  <h1>PankieChat</h1>
+  <p>Connect with your friends</p>
+</div>
+
   <!-- AUTH SCREEN -->
   <div class="auth-screen" id="authScreen">
     <div class="auth-card">
@@ -115,13 +122,13 @@
 
     </aside>
 
+    
     <!-- CHAT AREA -->
     <main class="chat-area">
 
       <!-- CHAT HEADER -->
       <header class="chat-header">
         <button id="mobileBackBtn" class="mobile-back-btn">←</button>
-        
         <div class="avatar blue">P</div>
 
         <div class="chat-user-info">
@@ -133,14 +140,20 @@
         <div class="header-actions">⌕　⋮</div>
       </header>
 
+      <!-- PINNED MESSAGE BAR -->
+      <div id="pinnedMessageBar" class="pinned-message-bar" style="display:none;">
+        <div class="pinned-message-content">
+          <small>📌 Pinned Message</small>
+          <p id="pinnedMessageText"></p>
+        </div>
+        <button type="button" id="unpinMessageBtn">✕</button>
+      </div>
+
       <!-- MESSAGES -->
       <div class="messages">
         <div class="date">TODAY</div>
 
-        <div
-          class="typing-indicator"
-          id="typingIndicator"
-        >
+        <div class="typing-indicator" id="typingIndicator">
           <span></span>
           <span></span>
           <span></span>
@@ -153,24 +166,16 @@
         <div>
           <small>Replying to</small>
           <p id="replyText"></p>
+        </div>
+        <button type="button" id="cancelReply">✕</button>
       </div>
-      <button type="button" id="cancelReply">✕</button>
-    </div>
 
       <!-- MESSAGE INPUT -->
       <div class="message-input">
         <button type="button">＋</button>
-
-        <input
-          type="text"
-          placeholder="Write a message..."
-        >
-
+        <input type="text" placeholder="Write a message...">
         <button type="button">☺</button>
-
-        <button type="button" class="send">
-          ➤
-        </button>
+        <button type="button" class="send">➤</button>
       </div>
 
     </main>
@@ -261,10 +266,26 @@
   <!-- JAVASCRIPT -->
   <script type="module" src="app.js"></script>
 
+  <!-- PIN CONFIRMATION MODAL -->
+<div id="pinConfirmModal" class="pin-confirm-modal">
+  <div class="pin-confirm-box">
+    <div class="pin-confirm-icon">📌</div>
+    <h3>Pin Message?</h3>
+    <p>Are you sure you want to pin this message?</p>
+
+    <div class="pin-confirm-actions">
+      <button id="cancelPinBtn">Cancel</button>
+      <button id="confirmPinBtn">Pin</button>
+    </div>
+  </div>
+</div>
+
   <!-- MESSAGE ACTION MENU -->
 <div id="messageActionMenu" class="message-action-menu">
-  <button id="replyAction">↩ Reply</button>
   <button id="forwardAction">➦ Forward</button>
+  <button id="replyAction">↩ Reply</button>
+  <button id="copyAction">📋 Copy</button>
+  <button id="pinAction">📌 Pin</button>
   <button id="reactAction">😊 React</button>
   <button id="deleteAction">🗑 Delete</button>
 </div>

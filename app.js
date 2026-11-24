@@ -14,6 +14,7 @@ import {
   push,
   onChildAdded,
   onChildChanged,
+  onChildRemoved,
   onValue,
   set,
   get,
@@ -42,6 +43,7 @@ const db = getDatabase(app);
 
 // ELEMENTS
 const authScreen = document.querySelector("#authScreen");
+const splashScreen = document.querySelector("#splashScreen");
 const authEmail = document.querySelector("#authEmail");
 const authPassword = document.querySelector("#authPassword");
 const loginBtn = document.querySelector("#loginBtn");
@@ -59,7 +61,6 @@ const userSearch = document.querySelector("#userSearch");
 const searchResults = document.querySelector("#searchResults");
 const chatList = document.querySelector(".chat-list");
 
-// CHAT HEADER
 const chatHeaderName = document.querySelector(".chat-header b");
 const chatHeaderAvatar = document.querySelector(".chat-header .avatar");
 
@@ -82,14 +83,45 @@ const cancelEdit = document.querySelector("#cancelEdit");
 // STATE
 let currentUser = null;
 let currentProfile = null;
+
 let stopMessages = null;
+let stopPinnedMessage = null;
+let stopPresence = null;
+let stopTyping = null;
+let stopPeerPresence = null;
+
 let replyingTo = null;
 let selectedMessage = null;
+let pendingPinMessage = null;
+
+let searchRequest = 0;
+let activeRoom = null;
+
+let typingWriteQueue = Promise.resolve();
+
+// PINNED MESSAGE PATH
+function getPinnedMessagePath() {
+  if (!activeRoom) return null;
+
+  return activeRoom.type === "general"
+    ? "rooms/general/pinnedMessage"
+    : `privateChats/${activeRoom.id}/pinnedMessage`;
+}
 
 const messageActionMenu = document.getElementById("messageActionMenu");
 
+// MESSAGE MENU
 function closeMessageMenu() {
+  if (!messageActionMenu) return;
+
   messageActionMenu.style.display = "none";
+
+  const picker = document.getElementById("reactionPicker");
+
+  if (picker) {
+    picker.style.display = "none";
+  }
+
   selectedMessage = null;
 }
 
@@ -101,29 +133,27 @@ document.addEventListener("click", event => {
     closeMessageMenu();
   }
 });
-let activeRoom = {
-  type: "general",
-  id: "general",
-  path: "rooms/general/messages"
-};
-let searchRequest = 0;
-let stopPresence = null;
-let stopTyping = null;
 
 // SET TYPING STATUS
-async function setTyping(isTyping) {
-  if (!currentUser || activeRoom.type !== "private") return;
-
-  const typingRef = ref(
-    db,
-    `privateChats/${activeRoom.id}/typing/${currentUser.uid}`
-  );
-
-  try {
-    await set(typingRef, isTyping);
-  } catch (error) {
-    console.error("Typing Error:", error);
+function setTyping(isTyping) {
+  if (!currentUser || !activeRoom || activeRoom.type !== "private") {
+    return Promise.resolve();
   }
+
+  // Capture the room path immediately
+  const typingPath =
+    `privateChats/${activeRoom.id}/typing/${currentUser.uid}`;
+
+  const typingRef = ref(db, typingPath);
+
+  // Keep typing updates in order
+  typingWriteQueue = typingWriteQueue
+    .catch(() => {})
+    .then(() => set(typingRef, Boolean(isTyping)));
+
+  return typingWriteQueue.catch(error => {
+    console.error("Typing Error:", error);
+  });
 }
 
 // ONLINE / OFFLINE STATUS
@@ -132,6 +162,7 @@ function startPresence() {
 
   if (stopPresence) {
     stopPresence();
+    stopPresence = null;
   }
 
   const uid = currentUser.uid;
@@ -151,8 +182,6 @@ function startPresence() {
         state: "online",
         lastChanged: serverTimestamp()
       });
-
-      console.log("User is online");
     } catch (error) {
       console.error("Presence Error:", error);
     }
@@ -160,9 +189,11 @@ function startPresence() {
 }
 
 // USERNAME HELPERS
-
 function cleanUsername(value) {
-  return value.trim().replace(/^@/, "").toLowerCase();
+  return String(value || "")
+    .trim()
+    .replace(/^@/, "")
+    .toLowerCase();
 }
 
 async function claimUsername(username, uid) {
@@ -224,7 +255,6 @@ async function claimUniqueUsername(baseUsername, uid) {
 }
 
 // AUTH: REGISTER
-
 registerBtn.onclick = async () => {
   const email = authEmail.value.trim();
   const password = authPassword.value;
@@ -252,7 +282,6 @@ registerBtn.onclick = async () => {
 };
 
 // AUTH: LOGIN
-
 loginBtn.onclick = async () => {
   const email = authEmail.value.trim();
   const password = authPassword.value;
@@ -275,50 +304,97 @@ loginBtn.onclick = async () => {
 };
 
 // AUTH STATE
-
 onAuthStateChanged(auth, async user => {
   currentUser = user;
 
-  if (user) {
-    authScreen.style.display = "none";
-    appScreen.style.display = "flex";
+  splashScreen.classList.remove("hide");
 
-    try {
+  try {
+    if (user) {
+      authScreen.style.display = "none";
+      appScreen.style.display = "flex";
+
       await loadProfile();
       await loadUserChats();
+
       listenAllChatPresence();
       listenAllChatTyping();
       startPresence();
-      openGeneralChat();
-    } catch (error) {
-      console.error("App Load Error:", error);
-      alert("Could not load app: " + error.message);
+
+      activeRoom = null;
+
+      chatHeaderName.textContent = "PankieChat";
+      chatHeaderAvatar.className = "avatar blue";
+      chatHeaderAvatar.textContent = "P";
+
+      document.querySelector("#chatStatus").textContent =
+        "Select a chat to start messaging";
+
+      document.querySelector("#typingStatus").textContent = "";
+
+      messagesArea.querySelectorAll(".message").forEach(message => {
+        message.remove();
+      });
+
+      setActiveChat("");
+
+      appScreen.classList.remove("mobile-chat-open");
+
+    } else {
+      authScreen.style.display = "flex";
+      appScreen.style.display = "none";
+
+      if (stopMessages) {
+        stopMessages();
+        stopMessages = null;
+      }
+
+      if (stopPinnedMessage) {
+        stopPinnedMessage();
+        stopPinnedMessage = null;
+      }
+
+      if (stopPresence) {
+        stopPresence();
+        stopPresence = null;
+      }
+
+      if (stopTyping) {
+        stopTyping();
+        stopTyping = null;
+      }
+
+      if (stopPeerPresence) {
+        stopPeerPresence();
+        stopPeerPresence = null;
+      }
+
+      closeMessageMenu();
+
+      activeRoom = null;
+      currentProfile = null;
+      pendingPinMessage = null;
+
+      searchResults.innerHTML = "";
+      userSearch.value = "";
+      chatList.innerHTML = "";
     }
 
-  } else {
-    authScreen.style.display = "flex";
-    appScreen.style.display = "none";
-
-    if (stopMessages) {
-      stopMessages();
-      stopMessages = null;
-    }
-
-    if (stopPresence) {
-      stopPresence();
-      stopPresence = null;
-    }
-    currentProfile = null;
-    searchResults.innerHTML = "";
-    userSearch.value = "";
-    chatList.innerHTML = "";
+  } catch (error) {
+    console.error("App Load Error:", error);
+    alert("Could not load app: " + error.message);
   }
 });
 
-// LOGOUT
+// HIDE SPLASH SCREEN
+setTimeout(() => {
+  splashScreen.classList.add("hide");
+}, 2000);
 
+// LOGOUT
 logoutBtn.onclick = async () => {
   try {
+    await setTyping(false);
     await signOut(auth);
     profileModal.classList.remove("show");
   } catch (error) {
@@ -327,7 +403,6 @@ logoutBtn.onclick = async () => {
 };
 
 // LOAD PROFILE
-
 async function loadProfile() {
   if (!currentUser) return;
 
@@ -379,7 +454,6 @@ async function loadProfile() {
 }
 
 // UPDATE PROFILE UI
-
 function updateProfileUI(profile) {
   const name = profile.name || "User";
   const username = profile.username || "username";
@@ -414,7 +488,6 @@ function updateProfileUI(profile) {
 }
 
 // SAVE PROFILE
-
 saveProfile.onclick = async () => {
   if (!currentUser) return;
 
@@ -477,7 +550,6 @@ saveProfile.onclick = async () => {
 };
 
 // EDIT PROFILE
-
 editProfileBtn.onclick = () => {
   editForm.style.display = "flex";
   editName.focus();
@@ -488,7 +560,6 @@ cancelEdit.onclick = () => {
 };
 
 // PROFILE PHOTO
-
 changePhotoBtn.onclick = () => photoInput.click();
 
 photoInput.onchange = async () => {
@@ -527,6 +598,7 @@ photoInput.onchange = async () => {
       updateProfileUI(profile);
 
       alert("Profile photo updated!");
+
     } catch (error) {
       console.error(error);
       alert("Photo could not be saved: " + error.message);
@@ -537,7 +609,6 @@ photoInput.onchange = async () => {
 };
 
 // PROFILE MODAL
-
 myProfile.onclick = () => {
   profileModal.classList.add("show");
 };
@@ -553,7 +624,6 @@ profileModal.onclick = event => {
 };
 
 // CHAT LIST HELPERS
-
 function addChatToList(roomId, name, username, photo, type, peerUid) {
   const existing = Array.from(chatList.children)
     .find(item => item.dataset.roomId === roomId);
@@ -605,7 +675,6 @@ function addChatToList(roomId, name, username, photo, type, peerUid) {
   const typing = document.createElement("small");
   typing.className = "chat-typing";
 
-  // UNREAD BADGE
   const unreadBadge = document.createElement("span");
   unreadBadge.className = "unread-badge";
   unreadBadge.textContent = "0";
@@ -619,23 +688,75 @@ function addChatToList(roomId, name, username, photo, type, peerUid) {
   return item;
 }
 
-// UPDATE LAST MESSAGE PREVIEW
+// RENDER CHAT LIST PREVIEW
+function renderChatPreview(item) {
+  if (!item) return;
 
+  const preview = item.querySelector(".last-message");
+
+  if (!preview) return;
+
+  if (item.dataset.isTyping === "true") {
+    preview.textContent = "Typing...";
+    preview.classList.add("is-typing");
+  } else {
+    preview.textContent =
+      item.dataset.lastMessage || (
+        item.dataset.roomType === "general"
+          ? "Start chatting..."
+          : "No messages yet"
+      );
+
+    preview.classList.remove("is-typing");
+  }
+}
+
+// UPDATE LAST MESSAGE PREVIEW
 function updateLastMessage(roomId, message) {
   const chatItem = Array.from(chatList.children)
     .find(item => item.dataset.roomId === roomId);
 
   if (!chatItem) return;
 
-  const preview = chatItem.querySelector(".last-message");
+  chatItem.dataset.lastMessage = message || "No messages yet";
 
-  if (preview) {
-    preview.textContent = message;
+  renderChatPreview(chatItem);
+}
+
+// REFRESH LAST MESSAGE AFTER DELETE
+async function refreshLastMessage(roomId, roomPath, roomType) {
+  try {
+    const snapshot = await get(ref(db, roomPath));
+
+    if (!snapshot.exists()) {
+      updateLastMessage(
+        roomId,
+        roomType === "general"
+          ? "Start chatting..."
+          : "No messages yet"
+      );
+      return;
+    }
+
+    const messages = Object.values(snapshot.val());
+
+    messages.sort((a, b) => {
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
+
+    const lastMessage = messages[0];
+
+    updateLastMessage(
+      roomId,
+      lastMessage?.text || "No messages yet"
+    );
+
+  } catch (error) {
+    console.error("Refresh Last Message Error:", error);
   }
 }
 
 // LOAD SAVED PRIVATE CHATS
-
 async function loadUserChats() {
   if (!currentUser) return;
 
@@ -658,6 +779,8 @@ async function loadUserChats() {
   const chats = snapshot.val();
 
   Object.entries(chats).forEach(([roomId, chat]) => {
+    if (roomId === "activeRoom" || !chat || typeof chat !== "object") return;
+
     const item = addChatToList(
       roomId,
       chat.name,
@@ -683,6 +806,8 @@ async function loadUserChats() {
     });
   });
 }
+
+// LISTEN ALL CHAT PRESENCE
 function listenAllChatPresence() {
   chatList.querySelectorAll(".chat").forEach(item => {
     const uid = item.dataset.peerUid;
@@ -705,61 +830,73 @@ function listenAllChatPresence() {
   });
 }
 
-// LISTEN ALL CHAT TYPING
-
+// LISTEN ALL CHAT TYPING + LAST MESSAGE
 function listenAllChatTyping() {
   chatList.querySelectorAll(".chat").forEach(item => {
     const uid = item.dataset.peerUid;
     const roomId = item.dataset.roomId;
+    const roomType = item.dataset.roomType;
 
-    if (!uid || !roomId) return;
+    if (!uid || !roomId || roomType !== "private") return;
 
+    // LISTEN PEER TYPING
     const typingRef = ref(
       db,
       `privateChats/${roomId}/typing/${uid}`
     );
 
     onValue(typingRef, snapshot => {
-      const isTyping = snapshot.val() === true;
-      const subtitle = item.querySelector(".last-message");
+      item.dataset.isTyping =
+        snapshot.val() === true ? "true" : "false";
 
-      if (!subtitle) return;
+      renderChatPreview(item);
 
-      if (isTyping) {
-        subtitle.textContent = "Typing...";
-        subtitle.classList.add("is-typing");
-      } else {
-  subtitle.classList.remove("is-typing");
+      const chatTyping = item.querySelector(".chat-typing");
 
-  const messagesRef = ref(
-    db,
-    `privateChats/${roomId}/messages`
-  );
+      if (chatTyping) {
+        chatTyping.textContent =
+          item.dataset.isTyping === "true" ? "Typing..." : "";
+      }
+    });
 
-  get(messagesRef).then(snapshot => {
-    if (!snapshot.exists()) {
-      subtitle.textContent = "@" + (item.dataset.username || "user");
-      return;
-    }
+    // LISTEN LAST MESSAGE
+    const messagesRef = ref(
+      db,
+      `privateChats/${roomId}/messages`
+    );
 
-    const messages = Object.values(snapshot.val());
-    const lastMessage = messages[messages.length - 1];
+    onValue(messagesRef, snapshot => {
+      if (!snapshot.exists()) {
+        item.dataset.lastMessage = "No messages yet";
+        renderChatPreview(item);
+        return;
+      }
 
-    subtitle.textContent = lastMessage?.text || "No messages yet";
-  });
-}
+      const messages = Object.values(snapshot.val());
+
+      messages.sort((a, b) => {
+        return (b.createdAt || 0) - (a.createdAt || 0);
+      });
+
+      item.dataset.lastMessage =
+        messages[0]?.text || "No messages yet";
+
+      renderChatPreview(item);
     });
   });
 }
-// OPEN GENERAL CHAT
 
+// OPEN GENERAL CHAT
 function openGeneralChat() {
+  // Clear typing status in previous private chat
+  setTyping(false);
+
   activeRoom = {
     type: "general",
     id: "general",
     path: "rooms/general/messages"
   };
-  // SAVE ACTIVE CHAT
+
   if (currentUser) {
     const activeChatRef = ref(
       db,
@@ -772,32 +909,41 @@ function openGeneralChat() {
   }
 
   chatHeaderName.textContent = "General Chat";
-
   chatHeaderAvatar.className = "avatar blue";
   chatHeaderAvatar.innerHTML = "G";
 
   if (stopPeerPresence) {
-  stopPeerPresence();
-  stopPeerPresence = null;
-}
+    stopPeerPresence();
+    stopPeerPresence = null;
+  }
+
   if (stopTyping) {
-  stopTyping();
-  stopTyping = null;
-}
+    stopTyping();
+    stopTyping = null;
+  }
 
-document.querySelector("#typingStatus").textContent = "";
+  document.querySelector("#typingStatus").textContent = "";
+  document.querySelector("#chatStatus").textContent = "";
 
-document.querySelector("#chatStatus").textContent = "";
   setActiveChat("general");
   listenMessages();
 }
 
 // ACTIVE CHAT STYLE
+function setActiveChat(roomId) {
+  chatList.querySelectorAll(".chat").forEach(item => {
+    item.classList.toggle(
+      "active",
+      item.dataset.roomId === roomId
+    );
+  });
 
-let stopPeerPresence = null;
+  if (window.innerWidth <= 768 && roomId) {
+    appScreen.classList.add("mobile-chat-open");
+  }
+}
 
 // LISTEN PEER PRESENCE
-
 function listenPeerPresence(uid) {
   if (stopPeerPresence) {
     stopPeerPresence();
@@ -848,14 +994,13 @@ function listenPeerPresence(uid) {
 }
 
 // LISTEN PEER TYPING
-
 function listenPeerTyping(uid) {
   if (stopTyping) {
     stopTyping();
     stopTyping = null;
   }
 
-  if (!uid) return;
+  if (!uid || !activeRoom) return;
 
   const typingRef = ref(
     db,
@@ -864,7 +1009,6 @@ function listenPeerTyping(uid) {
 
   stopTyping = onValue(typingRef, snapshot => {
     const isTyping = snapshot.val() === true;
-
     const typingStatus = document.querySelector("#typingStatus");
 
     if (typingStatus) {
@@ -884,28 +1028,16 @@ function listenPeerTyping(uid) {
     }
   });
 }
-function setActiveChat(roomId) {
-  chatList.querySelectorAll(".chat").forEach(item => {
-    item.classList.toggle(
-      "active",
-      item.dataset.roomId === roomId
-    );
-  });
-
-  // MOBILE: OPEN CHAT SCREEN
-  if (window.innerWidth <= 768) {
-    appScreen.classList.add("mobile-chat-open");
-  }
-}
 
 // OPEN PRIVATE CHAT
-
 async function openPrivateChat(peerUid, peerProfile) {
   if (!currentUser || !peerUid || !peerProfile) return;
 
+  // Clear typing status in previous room before switching
+  await setTyping(false);
+
   const members = [currentUser.uid, peerUid].sort();
   const roomId = members.join("_");
-
   const roomPath = `privateChats/${roomId}/messages`;
 
   const myProfileData = currentProfile || {
@@ -915,7 +1047,6 @@ async function openPrivateChat(peerUid, peerProfile) {
   };
 
   try {
-    // Save chat in my chat list
     await update(
       ref(db, `userChats/${currentUser.uid}/${roomId}`),
       {
@@ -926,7 +1057,6 @@ async function openPrivateChat(peerUid, peerProfile) {
       }
     );
 
-    // Save chat in the other user's chat list
     await update(
       ref(db, `userChats/${peerUid}/${roomId}`),
       {
@@ -951,7 +1081,15 @@ async function openPrivateChat(peerUid, peerProfile) {
       id: roomId,
       path: roomPath
     };
-    // SAVE ACTIVE CHAT
+
+    // Remove own typing status if connection disconnects
+    const myTypingRef = ref(
+      db,
+      `privateChats/${roomId}/typing/${currentUser.uid}`
+    );
+
+    await onDisconnect(myTypingRef).remove();
+
     const activeChatRef = ref(
       db,
       `userChats/${currentUser.uid}/activeRoom`
@@ -961,7 +1099,6 @@ async function openPrivateChat(peerUid, peerProfile) {
     await set(activeChatRef, roomId);
 
     chatHeaderName.textContent = peerProfile.name || "User";
-
     chatHeaderAvatar.className = "avatar blue";
     chatHeaderAvatar.innerHTML = "";
 
@@ -979,12 +1116,12 @@ async function openPrivateChat(peerUid, peerProfile) {
 
     setActiveChat(roomId);
     listenMessages();
-    if (activeRoom.type === "private") {
-      await set(
-        ref(db, `userChats/${currentUser.uid}/${activeRoom.id}/unreadCount`),
-        0
-      );
-    }
+
+    await set(
+      ref(db, `userChats/${currentUser.uid}/${activeRoom.id}/unreadCount`),
+      0
+    );
+
     listenPeerPresence(peerUid);
     listenPeerTyping(peerUid);
 
@@ -999,7 +1136,6 @@ async function openPrivateChat(peerUid, peerProfile) {
 }
 
 // CHAT LIST CLICK
-
 chatList.addEventListener("click", event => {
   const item = event.target.closest(".chat");
 
@@ -1023,9 +1159,7 @@ chatList.addEventListener("click", event => {
   openPrivateChat(peerUid, peerProfile);
 });
 
-
 // USER SEARCH
-
 userSearch.addEventListener("input", async () => {
   const requestId = ++searchRequest;
   const username = cleanUsername(userSearch.value);
@@ -1067,7 +1201,6 @@ userSearch.addEventListener("input", async () => {
     const result = document.createElement("div");
     result.className = "search-user";
 
-    // AVATAR
     const avatar = document.createElement("div");
     avatar.className = "avatar blue";
 
@@ -1083,7 +1216,6 @@ userSearch.addEventListener("input", async () => {
         (profile.name || "U").charAt(0).toUpperCase();
     }
 
-    // ONLINE STATUS
     const searchPresenceRef = ref(db, `presence/${uid}`);
 
     onValue(searchPresenceRef, snapshot => {
@@ -1095,7 +1227,6 @@ userSearch.addEventListener("input", async () => {
       );
     });
 
-    // USER INFO
     const info = document.createElement("div");
 
     const name = document.createElement("b");
@@ -1107,7 +1238,6 @@ userSearch.addEventListener("input", async () => {
     info.append(name, tag);
     result.append(avatar, info);
 
-    // OPEN PRIVATE CHAT
     result.onclick = () => {
       openPrivateChat(uid, profile);
 
@@ -1126,48 +1256,102 @@ userSearch.addEventListener("input", async () => {
   }
 });
 
-// MESSAGE LISTENER
+// MESSAGE REACTIONS DISPLAY
+function renderMessageReactions(container, reactions) {
+  container.replaceChildren();
 
+  const counts = {};
+
+  Object.values(reactions || {}).forEach(emoji => {
+    if (typeof emoji === "string" && emoji.trim()) {
+      counts[emoji] = (counts[emoji] || 0) + 1;
+    }
+  });
+
+  Object.entries(counts).forEach(([emoji, count]) => {
+    const chip = document.createElement("span");
+    chip.className = "reaction-chip";
+    chip.textContent = `${emoji} ${count}`;
+    container.appendChild(chip);
+  });
+}
+
+// POSITION MESSAGE MENU
+function positionMessageMenu(messageElement) {
+  if (!messageActionMenu) return;
+
+  messageActionMenu.style.display = "block";
+
+  const rect = messageElement.getBoundingClientRect();
+  const menuWidth = messageActionMenu.offsetWidth;
+  const menuHeight = messageActionMenu.offsetHeight;
+
+  const left = Math.max(
+    10,
+    Math.min(rect.left, window.innerWidth - menuWidth - 10)
+  );
+
+  let top = rect.bottom + 6;
+
+  if (top + menuHeight > window.innerHeight - 10) {
+    top = rect.top - menuHeight - 6;
+  }
+
+  top = Math.max(
+    10,
+    Math.min(top, window.innerHeight - menuHeight - 10)
+  );
+
+  messageActionMenu.style.left = `${left}px`;
+  messageActionMenu.style.top = `${top}px`;
+}
+
+// MESSAGE LISTENER
 function listenMessages() {
+  if (!activeRoom) return;
+
   if (stopMessages) {
     stopMessages();
     stopMessages = null;
   }
 
+  closeMessageMenu();
+
   messagesArea.querySelectorAll(".message").forEach(message => {
     message.remove();
   });
 
-  const messagesRef = ref(db, activeRoom.path);
+  const roomPath = activeRoom.path;
+  const roomId = activeRoom.id;
+  const roomType = activeRoom.type;
+  const messagesRef = ref(db, roomPath);
 
   const stopAdded = onChildAdded(messagesRef, snapshot => {
     const data = snapshot.val();
 
-    if (!data || !data.text || !currentUser) return;
+    if (!data || typeof data.text !== "string" || !currentUser) return;
 
     const item = document.createElement("div");
     item.classList.add("message");
     item.dataset.messageId = snapshot.key;
 
     const isSent = data.uid === currentUser.uid;
-
     item.classList.add(isSent ? "sent" : "received");
 
-    // REPLY DISPLAY
+    if (data.replyTo) {
+      const replyBox = document.createElement("div");
+      replyBox.className = "reply-quote";
 
-if (data.replyTo) {
-  const replyBox = document.createElement("div");
-  replyBox.className = "reply-quote";
+      const replySender = document.createElement("b");
+      replySender.textContent = data.replyTo.senderName || "User";
 
-  const replySender = document.createElement("b");
-  replySender.textContent = data.replyTo.senderName;
+      const replyContent = document.createElement("p");
+      replyContent.textContent = data.replyTo.text || "";
 
-  const replyContent = document.createElement("p");
-  replyContent.textContent = data.replyTo.text;
+      replyBox.append(replySender, replyContent);
+      item.appendChild(replyBox);
+    }
 
-  replyBox.append(replySender, replyContent);
-  item.appendChild(replyBox);
-}
     const messageText = document.createElement("span");
     messageText.textContent = data.text;
 
@@ -1179,108 +1363,155 @@ if (data.replyTo) {
       });
 
     item.append(messageText, time);
-    // MESSAGE CLICK ACTION MENU
-item.addEventListener("click", event => {
-  event.stopPropagation();
-
-  selectedMessage = {
-    id: snapshot.key,
-    text: data.text,
-    uid: data.uid,
-    senderName: data.senderName || "User",
-    roomPath: activeRoom.path,
-    roomId: activeRoom.id
-  };
-
-  messageActionMenu.style.display = "block";
-
-  const rect = item.getBoundingClientRect();
-
-  const left = Math.max(
-    10,
-    Math.min(
-      rect.left,
-      window.innerWidth - messageActionMenu.offsetWidth - 10
-    )
-  );
-
-  const top = Math.max(
-    10,
-    Math.min(
-      rect.bottom + 5,
-      window.innerHeight - messageActionMenu.offsetHeight - 10
-    )
-  );
-
-  messageActionMenu.style.left = left + "px";
-  messageActionMenu.style.top = top + "px";
-});
 
     if (isSent) {
       const status = document.createElement("small");
-      status.classList.add("message-status");
+      status.className = "message-status";
       status.textContent = data.status === "seen" ? "✓✓" : "✓";
-
-      if (data.status === "seen") {
-        status.classList.add("seen");
-      }
-
+      status.classList.toggle("seen", data.status === "seen");
       item.appendChild(status);
     }
 
-    messagesArea.appendChild(item);
-    updateLastMessage(activeRoom.id, data.text);
+    const reactions = document.createElement("div");
+    reactions.className = "message-reactions";
+    renderMessageReactions(reactions, data.reactions);
+    item.appendChild(reactions);
 
-    // Mark received private messages as seen
-    if (!isSent && activeRoom.type === "private") {
+    item.addEventListener("click", event => {
+      event.stopPropagation();
+
+      selectedMessage = {
+        id: snapshot.key,
+        text: data.text,
+        uid: data.uid,
+        senderName: data.senderName || "User",
+        roomPath,
+        roomId
+      };
+
+      positionMessageMenu(item);
+    });
+
+    messagesArea.appendChild(item);
+    updateLastMessage(roomId, data.text);
+
+    if (!isSent && roomType === "private") {
       update(
-        ref(db, `${activeRoom.path}/${snapshot.key}`),
+        ref(db, `${roomPath}/${snapshot.key}`),
         { status: "seen" }
       ).catch(console.error);
 
-    set(
-      ref(db, `userChats/${currentUser.uid}/${activeRoom.id}/unreadCount`),
-      0
-    ).catch(console.error);
-  }
+      set(
+        ref(db, `userChats/${currentUser.uid}/${roomId}/unreadCount`),
+        0
+      ).catch(console.error);
+    }
 
     messagesArea.scrollTop = messagesArea.scrollHeight;
   });
 
   const stopChanged = onChildChanged(messagesRef, snapshot => {
     const data = snapshot.val();
+
     const item = messagesArea.querySelector(
       `[data-message-id="${snapshot.key}"]`
     );
 
-    if (!item || !data || data.uid !== currentUser?.uid) return;
+    if (!item || !data) return;
 
     const status = item.querySelector(".message-status");
 
-    if (status) {
+    if (status && data.uid === currentUser?.uid) {
       status.textContent = data.status === "seen" ? "✓✓" : "✓";
       status.classList.toggle("seen", data.status === "seen");
     }
+
+    const reactionBox = item.querySelector(".message-reactions");
+
+    if (reactionBox) {
+      renderMessageReactions(reactionBox, data.reactions);
+    }
+  });
+
+  const stopRemoved = onChildRemoved(messagesRef, snapshot => {
+    const item = messagesArea.querySelector(
+      `[data-message-id="${snapshot.key}"]`
+    );
+
+    if (item) item.remove();
+
+    if (
+      selectedMessage?.id === snapshot.key &&
+      selectedMessage?.roomPath === roomPath
+    ) {
+      closeMessageMenu();
+    }
+
+    refreshLastMessage(roomId, roomPath, roomType);
   });
 
   stopMessages = () => {
     stopAdded();
     stopChanged();
+    stopRemoved();
   };
+
+  // LISTEN PINNED MESSAGE
+  if (stopPinnedMessage) {
+    stopPinnedMessage();
+    stopPinnedMessage = null;
+  }
+
+  const pinnedRef = ref(db, getPinnedMessagePath());
+
+  stopPinnedMessage = onValue(pinnedRef, snapshot => {
+    const bar = document.getElementById("pinnedMessageBar");
+    const text = document.getElementById("pinnedMessageText");
+
+    if (!bar || !text) return;
+
+    const pinned = snapshot.val();
+
+    if (!pinned) {
+      bar.style.display = "none";
+      return;
+    }
+
+    text.textContent =
+      `${pinned.senderName || "User"}: ${pinned.text || ""}`;
+
+    bar.style.display = "flex";
+
+    bar.onclick = event => {
+      if (event.target.closest("#unpinMessageBtn")) return;
+
+      const message = messagesArea.querySelector(
+        `[data-message-id="${pinned.messageId}"]`
+      );
+
+      if (message) {
+        message.scrollIntoView({
+          behavior: "smooth",
+          block: "center"
+        });
+
+        message.classList.add("pinned-highlight");
+
+        setTimeout(() => {
+          message.classList.remove("pinned-highlight");
+        }, 1800);
+      }
+    };
+  });
 }
 
 // SEND MESSAGE
-
-
 async function sendMessage() {
+  if (!activeRoom || !currentUser) return;
+
   const text = messageInput.value.trim();
 
   if (!text) return;
-
-  if (!currentUser) {
-    alert("Please login first.");
-    return;
-  }
 
   try {
     const messagesRef = ref(db, activeRoom.path);
@@ -1319,27 +1550,28 @@ async function sendMessage() {
         const peerActiveRoomRef = ref(
           db,
           `userChats/${peerUid}/activeRoom`
-      );
+        );
 
-      const peerActiveRoomSnapshot = await get(peerActiveRoomRef);
+        const peerActiveRoomSnapshot = await get(peerActiveRoomRef);
 
-      const peerIsViewingThisChat =
-        peerActiveRoomSnapshot.val() === activeRoom.id;
+        const peerIsViewingThisChat =
+          peerActiveRoomSnapshot.val() === activeRoom.id;
 
-      if (!peerIsViewingThisChat) {
-      await runTransaction(unreadRef, count => {
-        return (Number(count) || 0) + 1;
-      });
-    }
+        if (!peerIsViewingThisChat) {
+          await runTransaction(unreadRef, count => {
+            return (Number(count) || 0) + 1;
+          });
+        }
       }
     }
 
     updateLastMessage(activeRoom.id, text);
 
     await setTyping(false);
-    messageInput.value = "";
 
+    messageInput.value = "";
     replyingTo = null;
+
     document.getElementById("replyPreview").style.display = "none";
 
   } catch (error) {
@@ -1352,21 +1584,28 @@ sendButton.onclick = sendMessage;
 
 messageInput.addEventListener("keydown", event => {
   if (event.key === "Enter") {
+    event.preventDefault();
     sendMessage();
   }
 });
 
 // DETECT TYPING
-
 messageInput.addEventListener("input", () => {
-  if (activeRoom.type !== "private") return;
+  if (!activeRoom || activeRoom.type !== "private") return;
 
-  setTyping(messageInput.value.trim().length > 0);
+  const hasText = messageInput.value.trim().length > 0;
+
+  setTyping(hasText);
+});
+
+// STOP TYPING WHEN INPUT LOSES FOCUS
+messageInput.addEventListener("blur", () => {
+  setTyping(false);
 });
 
 console.log("PankieChat App Loaded");
-// SEARCH WINDOW
 
+// SEARCH WINDOW
 const searchTrigger = document.getElementById("searchTrigger");
 const searchOverlay = document.getElementById("searchOverlay");
 const closeSearch = document.getElementById("closeSearch");
@@ -1382,15 +1621,15 @@ closeSearch.onclick = () => {
   searchResults.innerHTML = "";
 };
 
-searchOverlay.onclick = (e) => {
-  if (e.target === searchOverlay) {
+searchOverlay.onclick = event => {
+  if (event.target === searchOverlay) {
     searchOverlay.classList.remove("active");
     userSearch.value = "";
     searchResults.innerHTML = "";
   }
 };
-// SEARCH CHATS
 
+// SEARCH CHATS
 const chatSearch = document.getElementById("chatSearch");
 
 chatSearch.addEventListener("input", () => {
@@ -1407,15 +1646,15 @@ chatSearch.addEventListener("input", () => {
     item.style.display = match ? "flex" : "none";
   });
 });
-// CANCEL REPLY
 
+// CANCEL REPLY
 const cancelReply = document.getElementById("cancelReply");
 
 cancelReply.onclick = () => {
   replyingTo = null;
-
   document.getElementById("replyPreview").style.display = "none";
 };
+
 // MOBILE BACK BUTTON
 const mobileBackBtn = document.getElementById("mobileBackBtn");
 
@@ -1424,6 +1663,7 @@ if (mobileBackBtn) {
     appScreen.classList.remove("mobile-chat-open");
   };
 }
+
 // REGISTER SERVICE WORKER
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
@@ -1432,6 +1672,7 @@ if ("serviceWorker" in navigator) {
       .catch(error => console.error("PWA Error:", error));
   });
 }
+
 // MESSAGE REPLY ACTION
 document.getElementById("replyAction").onclick = () => {
   if (!selectedMessage) return;
@@ -1449,87 +1690,685 @@ document.getElementById("replyAction").onclick = () => {
 
   closeMessageMenu();
 };
-// MESSAGE FORWARD ACTION
-document.getElementById("forwardAction").onclick = async () => {
+
+// MESSAGE COPY ACTION
+const copyAction = document.getElementById("copyAction");
+
+copyAction.onclick = async () => {
   if (!selectedMessage) return;
 
-  const message = selectedMessage;
-
-  const destination = prompt(
-    "Forward to: general သို့မဟုတ် private chat ID"
-  );
-
-  if (!destination) return;
-
-  let targetPath;
-
-  if (destination === "general") {
-    targetPath = "rooms/general/messages";
-  } else {
-    targetPath = `privateChats/${destination}/messages`;
+  try {
+    await navigator.clipboard.writeText(selectedMessage.text);
+    closeMessageMenu();
+  } catch (error) {
+    console.error("Copy Error:", error);
   }
+};
+
+// MESSAGE PIN ACTION
+const pinAction = document.getElementById("pinAction");
+const pinConfirmModal = document.getElementById("pinConfirmModal");
+const cancelPinBtn = document.getElementById("cancelPinBtn");
+const confirmPinBtn = document.getElementById("confirmPinBtn");
+
+pinAction.onclick = () => {
+  if (!selectedMessage || !activeRoom) return;
+
+  // Save selected message before closing menu
+  pendingPinMessage = {
+    ...selectedMessage,
+    pinPath: getPinnedMessagePath()
+  };
+
+  closeMessageMenu();
+
+  pinConfirmModal.style.display = "flex";
+};
+
+// CANCEL PIN
+cancelPinBtn.onclick = () => {
+  pinConfirmModal.style.display = "none";
+  pendingPinMessage = null;
+};
+
+// CONFIRM PIN
+confirmPinBtn.onclick = async () => {
+  if (!pendingPinMessage || !currentUser) return;
+
+  const message = pendingPinMessage;
+  const pinPath = message.pinPath;
+
+  if (!pinPath) return;
+
+  confirmPinBtn.disabled = true;
 
   try {
-    const newMessageRef = push(ref(db, targetPath));
-
-    await set(newMessageRef, {
+    await set(ref(db, pinPath), {
+      messageId: message.id,
       text: message.text,
-      uid: currentUser.uid,
-      senderName: currentProfile?.name || currentUser.email,
-      createdAt: Date.now(),
-      status: "sent",
-      forwarded: true
+      uid: message.uid,
+      senderName: message.senderName,
+      pinnedBy: currentUser.uid,
+      pinnedAt: Date.now()
     });
 
-    closeMessageMenu();
-    alert("Message forwarded!");
+    pinConfirmModal.style.display = "none";
+    pendingPinMessage = null;
+
   } catch (error) {
-    alert("Forward failed: " + error.message);
+    console.error("Pin Error:", error);
+    alert("Could not pin message: " + error.message);
+
+  } finally {
+    confirmPinBtn.disabled = false;
   }
 };
+
+// UNPIN BUTTON
+const unpinMessageBtn = document.getElementById("unpinMessageBtn");
+
+if (unpinMessageBtn) {
+  unpinMessageBtn.onclick = async () => {
+    const pinPath = getPinnedMessagePath();
+    if (!pinPath) return;
+
+    try {
+      await remove(ref(db, pinPath));
+    } catch (error) {
+      console.error("Unpin Error:", error);
+    }
+  };
+}
+
+// MESSAGE FORWARD ACTION
+document.getElementById("forwardAction").onclick = () => {
+  if (!selectedMessage || !currentUser) return;
+
+  const message = { ...selectedMessage };
+
+  closeMessageMenu();
+
+  document.getElementById("forwardChatModal")?.remove();
+
+  const modal = document.createElement("div");
+  modal.id = "forwardChatModal";
+
+  modal.innerHTML = `
+    <div class="forward-box">
+      <h3>Forward Message</h3>
+      <p class="forward-subtitle">Choose a chat</p>
+
+      <div class="forward-chat-list"></div>
+
+      <div class="forward-buttons">
+        <button class="forward-cancel" type="button">Cancel</button>
+        <button class="forward-send" type="button" disabled>Send</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  const list = modal.querySelector(".forward-chat-list");
+  const sendBtn = modal.querySelector(".forward-send");
+  const cancelBtn = modal.querySelector(".forward-cancel");
+
+  let selectedChat = null;
+
+  // SHOW EXISTING CHATS
+  chatList.querySelectorAll(".chat").forEach(chat => {
+    const roomId = chat.dataset.roomId;
+    const roomType = chat.dataset.roomType;
+    const name = chat.dataset.name || "User";
+    const photo = chat.dataset.photo || "";
+
+    const item = document.createElement("div");
+    item.className = "forward-chat-item";
+
+    const avatar = document.createElement("div");
+    avatar.className = "forward-avatar";
+
+    if (photo) {
+      const img = document.createElement("img");
+      img.src = photo;
+      avatar.appendChild(img);
+    } else {
+      avatar.textContent = name.charAt(0).toUpperCase();
+    }
+
+    const chatName = document.createElement("span");
+    chatName.className = "forward-chat-name";
+    chatName.textContent = name;
+
+    const check = document.createElement("span");
+    check.className = "forward-check";
+    check.textContent = "✓";
+
+    item.append(avatar, chatName, check);
+
+    item.onclick = () => {
+      list.querySelectorAll(".forward-chat-item").forEach(element => {
+        element.classList.remove("selected");
+      });
+
+      item.classList.add("selected");
+
+      selectedChat = {
+        id: roomId,
+        type: roomType
+      };
+
+      sendBtn.disabled = false;
+    };
+
+    list.appendChild(item);
+  });
+
+  if (!list.children.length) {
+    const empty = document.createElement("p");
+    empty.className = "forward-empty";
+    empty.textContent = "No chats available";
+    list.appendChild(empty);
+  }
+
+  // CANCEL
+  cancelBtn.onclick = () => {
+    modal.remove();
+  };
+
+  // SEND FORWARDED MESSAGE
+  sendBtn.onclick = async () => {
+    if (!selectedChat) return;
+
+    sendBtn.disabled = true;
+    sendBtn.textContent = "Sending...";
+
+    const targetPath = selectedChat.type === "general"
+      ? "rooms/general/messages"
+      : `privateChats/${selectedChat.id}/messages`;
+
+    try {
+      const newMessageRef = push(ref(db, targetPath));
+
+      const forwardedData = {
+        text: message.text,
+        uid: currentUser.uid,
+        senderName: currentProfile?.name || currentUser.email,
+        createdAt: Date.now(),
+        status: "sent",
+        forwarded: true
+      };
+
+      await set(newMessageRef, forwardedData);
+
+      updateLastMessage(selectedChat.id, message.text);
+
+      modal.remove();
+
+    } catch (error) {
+      console.error("Forward Error:", error);
+
+      alert("Forward failed: " + error.message);
+
+      sendBtn.disabled = false;
+      sendBtn.textContent = "Send";
+    }
+  };
+};
+
+// FORWARD MODAL CSS
+if (!document.getElementById("forwardModalStyles")) {
+  const style = document.createElement("style");
+
+  style.id = "forwardModalStyles";
+
+  style.textContent = `
+    #forwardChatModal {
+      position: fixed;
+      inset: 0;
+      z-index: 99999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+
+    .forward-box {
+      width: 100%;
+      max-width: 380px;
+      max-height: 80vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+      border-radius: 20px;
+      background: var(--card-bg, #ffffff);
+      color: var(--text-color, #111111);
+      box-shadow: 0 15px 45px rgba(0,0,0,0.2);
+    }
+
+    .forward-box h3 {
+      margin: 0;
+      font-size: 19px;
+    }
+
+    .forward-subtitle {
+      margin: 6px 0 14px;
+      opacity: 0.6;
+      font-size: 13px;
+    }
+
+    .forward-chat-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      overflow-y: auto;
+      min-height: 50px;
+      max-height: 50vh;
+    }
+
+    .forward-chat-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px;
+      border-radius: 13px;
+      cursor: pointer;
+      background: rgba(128,128,128,0.08);
+      transition: 0.2s;
+    }
+
+    .forward-chat-item:hover {
+      background: rgba(128,128,128,0.16);
+    }
+
+    .forward-chat-item.selected {
+      background: rgba(55,130,255,0.15);
+      outline: 1px solid #3985ff;
+    }
+
+    .forward-avatar {
+      width: 42px;
+      height: 42px;
+      min-width: 42px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      background: #3985ff;
+      color: white;
+      font-weight: bold;
+    }
+
+    .forward-avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .forward-chat-name {
+      flex: 1;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .forward-check {
+      display: none;
+      color: #3985ff;
+      font-weight: bold;
+    }
+
+    .forward-chat-item.selected .forward-check {
+      display: block;
+    }
+
+    .forward-empty {
+      text-align: center;
+      opacity: 0.6;
+      padding: 20px;
+    }
+
+    .forward-buttons {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .forward-buttons button {
+      border: none;
+      border-radius: 12px;
+      padding: 11px 20px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .forward-cancel {
+      background: rgba(128,128,128,0.15);
+      color: inherit;
+    }
+
+    .forward-send {
+      background: #3985ff;
+      color: white;
+    }
+
+    .forward-send:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    @media (max-width: 768px) {
+      .forward-box {
+        max-width: 100%;
+      }
+    }
+  `;
+
+  document.head.appendChild(style);
+}
+
 // MESSAGE REACT ACTION
-document.getElementById("reactAction").onclick = async () => {
+const reactAction = document.getElementById("reactAction");
+
+function ensureReactionPicker() {
+  let picker = document.getElementById("reactionPicker");
+
+  if (picker) return picker;
+
+  picker = document.createElement("div");
+  picker.id = "reactionPicker";
+  picker.className = "reaction-picker";
+
+  ["❤️", "😂", "😮", "😢", "👍"].forEach(emoji => {
+    const button = document.createElement("button");
+
+    button.type = "button";
+    button.textContent = emoji;
+    button.setAttribute("aria-label", `React ${emoji}`);
+
+    button.addEventListener("click", async event => {
+      event.stopPropagation();
+
+      if (!selectedMessage || !currentUser) return;
+
+      const message = selectedMessage;
+
+      try {
+        await set(
+          ref(
+            db,
+            `${message.roomPath}/${message.id}/reactions/${currentUser.uid}`
+          ),
+          emoji
+        );
+
+        closeMessageMenu();
+
+      } catch (error) {
+        alert("Reaction failed: " + error.message);
+      }
+    });
+
+    picker.appendChild(button);
+  });
+
+  messageActionMenu.appendChild(picker);
+
+  if (!document.getElementById("messageActionExtraStyles")) {
+    const style = document.createElement("style");
+
+    style.id = "messageActionExtraStyles";
+
+    style.textContent = `
+      .reaction-picker {
+        display: none;
+        gap: 6px;
+        align-items: center;
+        justify-content: center;
+        padding: 8px 4px;
+        flex-wrap: nowrap;
+      }
+
+      .reaction-picker button {
+        border: 0;
+        background: rgba(128,128,128,.14);
+        border-radius: 12px;
+        padding: 7px;
+        font-size: 21px;
+        cursor: pointer;
+        line-height: 1;
+      }
+
+      .reaction-picker button:hover {
+        background: rgba(128,128,128,.28);
+      }
+
+      .message-reactions {
+        display: flex;
+        gap: 5px;
+        flex-wrap: wrap;
+        margin-top: 4px;
+      }
+
+      .reaction-chip {
+        font-size: 13px;
+        padding: 2px 7px;
+        border-radius: 12px;
+        background: rgba(128,128,128,.16);
+      }
+
+      @media (max-width: 768px) {
+        .reaction-picker button {
+          font-size: 20px;
+          padding: 8px;
+        }
+      }
+    `;
+
+    document.head.appendChild(style);
+  }
+
+  return picker;
+}
+
+reactAction.onclick = event => {
+  event.stopPropagation();
+
   if (!selectedMessage) return;
 
-  const message = selectedMessage;
+  const picker = ensureReactionPicker();
+  const willShow = picker.style.display !== "flex";
 
-  const emoji = prompt("Choose reaction: ❤️ 😂 😮 😢 👍 🔥");
+  picker.style.display = willShow ? "flex" : "none";
 
-  if (!emoji) return;
+  if (willShow) {
+    requestAnimationFrame(() => {
+      const messageElement = messagesArea.querySelector(
+        `[data-message-id="${selectedMessage.id}"]`
+      );
 
-  try {
-    await set(
-      ref(
-        db,
-        `${message.roomPath}/${message.id}/reactions/${currentUser.uid}`
-      ),
-      emoji
-    );
-
-    closeMessageMenu();
-  } catch (error) {
-    alert("Reaction failed: " + error.message);
+      if (messageElement) {
+        positionMessageMenu(messageElement);
+      }
+    });
   }
 };
+
 // MESSAGE DELETE ACTION
-document.getElementById("deleteAction").onclick = async () => {
-  if (!selectedMessage) return;
+const deleteAction = document.getElementById("deleteAction");
 
-  if (selectedMessage.uid !== currentUser.uid) {
-    alert("You can only delete your own messages.");
-    closeMessageMenu();
-    return;
-  }
+if (deleteAction) {
+  deleteAction.onclick = () => {
+    if (!selectedMessage || !currentUser) return;
 
-  if (!confirm("ဒီ message ကို ဖျက်မှာ သေချာလား?")) return;
-
-  try {
-    await remove(
-      ref(db, `${selectedMessage.roomPath}/${selectedMessage.id}`)
-    );
+    const message = { ...selectedMessage };
 
     closeMessageMenu();
-  } catch (error) {
-    alert("Delete failed: " + error.message);
-  }
-};
+
+    document.getElementById("deleteConfirmModal")?.remove();
+
+    const modal = document.createElement("div");
+    modal.id = "deleteConfirmModal";
+
+    modal.innerHTML = `
+      <div class="delete-confirm-box">
+        <div class="delete-icon">🗑️</div>
+        <h3>Delete Message?</h3>
+        <p>Are you Sure to Delete This Message?</p>
+
+        <div class="delete-confirm-buttons">
+          <button type="button" class="delete-cancel">Cancel</button>
+          <button type="button" class="delete-confirm">Delete</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    modal.querySelector(".delete-cancel").onclick = () => {
+      modal.remove();
+    };
+
+    modal.onclick = event => {
+      if (event.target === modal) modal.remove();
+    };
+
+    modal.querySelector(".delete-confirm").onclick = async () => {
+      const deleteBtn = modal.querySelector(".delete-confirm");
+
+      deleteBtn.disabled = true;
+      deleteBtn.textContent = "Deleting...";
+
+      try {
+        const messageRef = ref(
+          db,
+          `${message.roomPath}/${message.id}`
+        );
+
+        const messageSnap = await get(messageRef);
+
+        if (!messageSnap.exists()) {
+          modal.remove();
+          return;
+        }
+
+        const latestMessage = messageSnap.val();
+
+        await remove(messageRef);
+
+        if (
+          message.roomPath.startsWith("privateChats/") &&
+          latestMessage.status !== "seen"
+        ) {
+          const roomId = message.roomId;
+
+          const peerSnap = await get(
+            ref(db, `userChats/${currentUser.uid}/${roomId}/peerUid`)
+          );
+
+          const peerUid = peerSnap.val();
+
+          const unreadOwner =
+            latestMessage.uid === currentUser.uid
+              ? peerUid
+              : currentUser.uid;
+
+          if (unreadOwner) {
+            const unreadRef = ref(
+              db,
+              `userChats/${unreadOwner}/${roomId}/unreadCount`
+            );
+
+            await runTransaction(unreadRef, count => {
+              return Math.max(0, (Number(count) || 0) - 1);
+            });
+          }
+        }
+
+        modal.remove();
+
+      } catch (error) {
+        console.error("Delete Error:", error);
+
+        alert("Delete failed: " + error.message);
+
+        deleteBtn.disabled = false;
+        deleteBtn.textContent = "Delete";
+      }
+    };
+  };
+}
+
+// DELETE MODAL CSS
+if (!document.getElementById("deleteConfirmStyles")) {
+  const style = document.createElement("style");
+  style.id = "deleteConfirmStyles";
+
+  style.textContent = `
+    #deleteConfirmModal {
+      position: fixed;
+      inset: 0;
+      z-index: 100000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: rgba(0,0,0,.65);
+      backdrop-filter: blur(10px);
+    }
+
+    .delete-confirm-box {
+      width: 100%;
+      max-width: 340px;
+      padding: 28px 22px;
+      border-radius: 22px;
+      text-align: center;
+      color: white;
+      background: #182238;
+      box-shadow: 0 20px 60px rgba(0,0,0,.45);
+    }
+
+    .delete-icon {
+      font-size: 35px;
+      margin-bottom: 12px;
+    }
+
+    .delete-confirm-box p {
+      color: #aab5cc;
+      font-size: 13px;
+    }
+
+    .delete-confirm-buttons {
+      display: flex;
+      gap: 10px;
+      margin-top: 24px;
+    }
+
+    .delete-confirm-buttons button {
+      flex: 1;
+      padding: 12px;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+    }
+
+    .delete-cancel {
+      background: rgba(255,255,255,.12);
+      color: white;
+    }
+
+    .delete-confirm {
+      background: #ef4444;
+      color: white;
+    }
+  `;
+
+  document.head.appendChild(style);
+}
+
+console.log("PankieChat App Loaded");
