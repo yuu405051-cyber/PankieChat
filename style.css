@@ -690,3 +690,50 @@ button, .chat-item { -webkit-tap-highlight-color: transparent; }
   .header-actions .icon-button { width: 31px; height: 34px; }
   .avatar { flex-basis: 39px; width: 39px; height: 39px; }
 }
+.photo-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: rgba(0,0,0,.75);
+  backdrop-filter: blur(15px);
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.photo-modal-content {
+  width: min(420px, 100%);
+  background: #151e30;
+  border: 1px solid rgba(255,255,255,.15);
+  border-radius: 22px;
+  padding: 20px;
+  color: white;
+  text-align: center;
+}
+
+.photo-modal-content img {
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  border-radius: 14px;
+}
+
+#closePhoto {
+  float: right;
+}
+
+#sendPhoto {
+  width: 100%;
+  padding: 13px;
+  margin-top: 15px;
+  border: 0;
+  border-radius: 12px;
+  background: #438cff;
+  color: white;
+  cursor: pointer;
+}
+
+#photoProgress {
+  display: none;
+}
