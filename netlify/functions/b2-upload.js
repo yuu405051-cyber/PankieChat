@@ -1,15 +1,29 @@
 
-const admin = require("firebase-admin");
+const {
+  initializeApp,
+  cert,
+  getApps
+} = require("firebase-admin/app");
+
+const { getAuth } = require("firebase-admin/auth");
+
 const {
   S3Client,
   PutObjectCommand
 } = require("@aws-sdk/client-s3");
+
 const crypto = require("crypto");
 
-if (!admin.apps.length) {
+if (!getApps().length) {
   const serviceAccount = JSON.parse(
     process.env.FIREBASE_SERVICE_ACCOUNT
   );
+
+  initializeApp({
+    credential: cert(serviceAccount),
+    databaseURL: process.env.FIREBASE_DATABASE_URL
+  });
+}
 
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
@@ -60,7 +74,7 @@ exports.handler = async (event) => {
     }
 
     const token = authHeader.slice(7);
-    const decoded = await admin.auth().verifyIdToken(token);
+    const decoded = await getAuth().verifyIdToken(token);
 
     const { fileName, contentType, fileData } =
       JSON.parse(event.body || "{}");
