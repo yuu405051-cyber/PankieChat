@@ -1,397 +1,243 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#080d1b">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#080d19">
+  <meta name="description" content="PankieChat — Connect with your friends">
   <title>PankieChat</title>
   <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#080d1b">
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- Splash screen -->
+  <section id="splashScreen">
+    <div class="splash-content">
+      <div class="splash-logo">P</div>
+      <h1 class="splash-title">PankieChat</h1>
+      <p class="splash-subtitle">Connect with your friends</p>
+    </div>
+  </section>
 
-  <!-- SPLASH SCREEN -->
-<div id="splashScreen" class="splash-screen">
-  <div class="splash-logo">P</div>
-  <h1>PankieChat</h1>
-  <p>Connect with your friends</p>
-</div>
-
-  <!-- AUTH SCREEN -->
-  <div class="auth-screen" id="authScreen">
+  <!-- Authentication -->
+  <section id="authScreen">
     <div class="auth-card">
-      <div class="logo">P</div>
-      <h2>Welcome to PankieChat</h2>
-      <p>Connect with your friends</p>
-
-      <input
-        type="email"
-        id="authEmail"
-        placeholder="Email address"
-        autocomplete="email"
-      >
-
+      <h1>Welcome to PankieChat</h1>
+      <p>Sign in or create an account to continue.</p>
+      <input id="authEmail" type="email" placeholder="Email address" autocomplete="email">
       <div class="password-field">
-        <input
-        type="password"
-        id="authPassword"
-        placeholder="Password"
-        autocomplete="current-password"
-      >
-      <button type="button" class="toggle-password" data-target="authPassword">Show Password</button>
+        <input id="authPassword" type="password" placeholder="Password" autocomplete="current-password">
+        <button class="toggle-password" type="button" data-target="authPassword" aria-label="Show or hide password">◉</button>
+      </div>
+      <div class="auth-actions">
+        <button id="loginBtn" type="button">Log in</button>
+        <button id="registerBtn" type="button">Create account</button>
+      </div>
+      <p id="authMessage" role="status" aria-live="polite"></p>
     </div>
+  </section>
 
-      <button id="loginBtn">Login</button>
-      <button id="registerBtn">Create Account</button>
-
-      <p id="authMessage"></p>
-    </div>
-  </div>
-
-  <!-- MAIN APP -->
-  <div class="app" id="app">
-
-    <!-- SIDEBAR -->
+  <!-- Main application -->
+  <main id="app">
     <aside class="sidebar">
-
-      <!-- BRAND -->
       <div class="brand">
-        <div class="logo">P</div>
-        <h2>PankieChat</h2>
+        <h1 class="brand-name">PankieChat</h1>
+        <button class="search-trigger" id="searchTrigger" type="button" aria-label="Find people">⌕</button>
       </div>
 
-     <!-- USER SEARCH -->
-    <div class="search-trigger" id="searchTrigger">
-      <span>⌕</span>
-    </div>
-
-    <div class="search-overlay" id="searchOverlay">
-      <div class="search-window">
-        <div class="search-window-header">
-          <input
-            type="text"
-            id="userSearch"
-            placeholder="Search username..."
-          >
-        <button id="closeSearch">✕</button>
+      <div class="chat-search-wrap">
+        <input id="chatSearch" type="search" placeholder="Search chats..." autocomplete="off">
       </div>
 
-      <div id="searchResults" class="search-results"></div>
-    </div>
-  </div>
+      <div class="chat-list" aria-label="Chats"></div>
 
-      <!-- CHAT SEARCH -->
-      <div class="search">
-        <span>⌕</span>
-        <input
-          type="text"
-          id="chatSearch"
-          placeholder="Search chats..."
-        >
-      </div>
-
-      <div class="section-title">MESSAGES</div>
-
-      <!-- CHAT LIST -->
-      <div class="chat-list">
-        <!-- Chat list will be added here -->
-      </div>
-
-      <!-- MY PROFILE -->
-      <div class="profile" id="myProfile">
-        <div class="avatar green">Y</div>
-
-        <div class="profile-info">
-          <b>Your Profile</b>
-          <p>@yourusername</p>
-
-          <small class="online-status">
-            <span class="status-dot"></span>
-            Online
-          </small>
+      <div class="profile-strip">
+        <div id="myProfile" class="my-profile" role="button" tabindex="0" aria-label="Open profile">
+          <div class="avatar green">U</div>
+          <div class="profile-info">
+            <strong>My profile</strong>
+            <span>Account settings</span>
+          </div>
         </div>
-
-        <span>⚙</span>
+        <button class="logout-btn" id="logoutBtn" type="button" aria-label="Log out" title="Log out">↪</button>
       </div>
-
-      <button id="logoutBtn" class="logout-btn">
-        Logout
-      </button>
-
     </aside>
 
-    
-    <!-- CHAT AREA -->
-    <main class="chat-area">
-
-      <!-- CHAT HEADER -->
+    <section class="chat-area">
       <header class="chat-header">
-        <button id="mobileBackBtn" class="mobile-back-btn">←</button>
-        <div class="avatar blue">P</div>
-
-        <div class="chat-user-info">
-          <b id="chatHeaderName">PankieChat</b>
-          <small id="chatStatus">Offline</small>
-          <small id="typingStatus" class="typing-status"></small>
+        <button id="mobileBackBtn" type="button" aria-label="Back to chats">‹</button>
+        <div class="avatar">P</div>
+        <div class="chat-header-info">
+          <strong id="chatHeaderName">PankieChat</strong>
+          <span id="chatStatus">Select a chat to start messaging</span>
+          <span id="typingStatus"></span>
         </div>
-
-        <div class="header-actions">⌕　⋮</div>
+        <div class="header-actions">
+          <button class="icon-button" type="button" aria-label="Chat options" title="Chat options">⋯</button>
+        </div>
       </header>
 
-      <!-- PINNED MESSAGE BAR -->
-      <div id="pinnedMessageBar" class="pinned-message-bar" style="display:none;">
-        <div class="pinned-message-content">
-          <small>📌 Pinned Message</small>
-          <p id="pinnedMessageText"></p>
+      <div id="pinnedMessageBar">
+        <span aria-hidden="true">📌</span>
+        <span id="pinnedMessageText"></span>
+        <button id="unpinMessageBtn" type="button" aria-label="Unpin message" title="Unpin">×</button>
+      </div>
+
+      <div class="messages" aria-live="polite">
+        <div class="empty-chat">
+          <div class="empty-chat-icon">💬</div>
+          <h3>Welcome to PankieChat</h3>
+          <p>Select a chat to start messaging</p>
         </div>
-        <button type="button" id="unpinMessageBtn">✕</button>
+        <div id="typingIndicator" class="typing-indicator" hidden></div>
       </div>
 
-      <!-- MESSAGES -->
-      <div class="messages">
-        <div class="date">TODAY</div>
-
-        <div class="typing-indicator" id="typingIndicator">
-          <span></span>
-          <span></span>
-          <span></span>
-          <small>typing...</small>
-        </div>
+      <div id="replyPreview" class="reply-preview">
+        <span>↪</span>
+        <span id="replyText"></span>
+        <button id="cancelReply" type="button" aria-label="Cancel reply">×</button>
       </div>
 
-      <!-- REPLY PREVIEW -->
-      <div id="replyPreview" class="reply-preview" style="display:none;">
-        <div>
-          <small>Replying to</small>
-          <p id="replyText"></p>
-        </div>
-        <button type="button" id="cancelReply">✕</button>
+      <div class="composer">
+        <button id="attachButton" class="icon-button" type="button" aria-label="Attach" title="Attach">＋</button>
+        <textarea id="messageInput" rows="1" placeholder="Select a chat to start messaging" disabled></textarea>
+        <button id="sendButton" type="button" aria-label="Send message" disabled>➤</button>
       </div>
 
-      <!-- MESSAGE INPUT -->
-      <div class="message-input">
-        <button type="button" id="attachButton">＋</button>
-
-      <input
-        type="text"
-        id="messageInput"
-        placeholder="Write a message..."
-      >
-      
-      <input
-        type="file"
-        id="mediaInput"
-        accept="image/*,video/*"
-        hidden
-      >
-
-      
-      <input
-        type="file"
-        id="documentInput"
-        accept=".pdf,.doc,.docx,.txt,.zip,.xlsx,.pptx"
-        hidden
-      >
-
-      <button type="button">☺</button>
-
-      <button type="button" class="send" id="sendButton">➤</button>
-    </div>
-
-
-<!-- ATTACHMENT POPUP -->
-<div id="attachmentPopup" class="attachment-popup">
-  <button type="button" id="photoOption">
-    <span>🖼️</span> Photo & Video
-  </button>
-
-  <button type="button" id="fileOption">
-    <span>📁</span> File
-  </button>
-
-  <button type="button" id="locationOption">
-    <span>📍</span> Location
-  </button>
-
-  <button type="button" id="voiceOption">
-    <span>🎙️</span> Voice Message
-  </button>
-</div>
-
-    </main>
-  </div>
-
-  <!-- PROFILE MODAL -->
-  <div class="profile-modal" id="profileModal">
-    <div class="profile-card">
-
-      <button
-        class="close-profile"
-        id="closeProfile"
-      >
-        ×
-      </button>
-
-      <div
-        class="avatar green profile-avatar"
-        id="profileAvatar"
-      >
-        Y
+      <div id="attachmentPopup" class="attachment-popup">
+        <button id="photoOption" type="button"><span>▧</span> Photo or video</button>
+        <button id="fileOption" type="button"><span>▤</span> Document</button>
+        <button id="locationOption" type="button"><span>⌖</span> Share location</button>
+        <button id="voiceOption" type="button"><span>♫</span> Voice message</button>
       </div>
 
-      <input
-        type="file"
-        id="photoInput"
-        accept="image/*"
-        hidden
-      >
+      <input id="mediaInput" type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4" hidden>
+      <input id="documentInput" type="file" accept="application/pdf,text/plain" hidden>
+    </section>
+  </main>
 
-      <button
-        class="edit-photo"
-        id="changePhotoBtn"
-      >
-        Change Profile Photo
-      </button>
-
-      <h2>Your Profile</h2>
-      <p>@yourusername</p>
-
-      <div class="profile-detail">
-        <span>Full Name</span>
-        <b>Your Name</b>
+  <!-- People search -->
+  <div id="searchOverlay" class="search-overlay">
+    <div class="search-window">
+      <div class="modal-actions" style="margin-top:0">
+        <h2 style="margin:0 auto 0 0;font-size:18px">Find people</h2>
+        <button id="closeSearch" type="button" aria-label="Close search">×</button>
       </div>
-
-      <div class="profile-detail">
-        <span>Username</span>
-        <b>@yourusername</b>
-      </div>
-
-      <button
-        class="edit-profile"
-        id="editProfileBtn"
-      >
-        Edit Profile
-      </button>
-
-      <!-- EDIT PROFILE FORM -->
-      <div
-        class="edit-form"
-        id="editForm"
-        style="display:none;"
-      >
-        <input
-          type="text"
-          id="editName"
-          placeholder="Your Name"
-        >
-
-        <input
-          type="text"
-          id="editUsername"
-          placeholder="Username"
-        >
-
-        <button id="saveProfile">
-          Save Changes
-        </button>
-
-        <button id="cancelEdit">
-          Cancel
-        </button>
-      </div>
-
+      <input id="userSearch" type="search" placeholder="Search by username..." autocomplete="off">
+      <div id="searchResults"></div>
     </div>
   </div>
 
-  <!-- JAVASCRIPT -->
+  <!-- Profile -->
+  <div id="profileModal" class="modal">
+    <div class="modal-card">
+      <div class="modal-actions" style="margin-top:0">
+        <h2 style="margin:0 auto 0 0;font-size:19px">Your profile</h2>
+        <button id="closeProfile" type="button" aria-label="Close profile">×</button>
+      </div>
+      <div class="profile-top">
+        <div id="profileAvatar" class="avatar large">U</div>
+        <button id="changePhotoBtn" class="secondary-button" type="button">Change photo</button>
+        <input id="photoInput" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+      </div>
+      <div id="editForm">
+        <label for="editName">Display name</label>
+        <input id="editName" type="text" maxlength="40" placeholder="Your name">
+        <label for="editUsername">Username</label>
+        <input id="editUsername" type="text" maxlength="20" placeholder="username">
+        <div class="modal-actions">
+          <button id="cancelEdit" type="button">Cancel</button>
+          <button id="saveProfile" class="confirm" type="button">Save profile</button>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="editProfileBtn" type="button">Edit profile</button>
+        <button id="deleteAccountBtn" class="danger-button" type="button">Delete account</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Message action menu -->
+  <div id="messageActionMenu" class="message-action-menu">
+    <button id="replyAction" type="button">↩ Reply</button>
+    <button id="forwardAction" type="button">➦ Forward</button>
+    <button id="copyAction" type="button">▢ Copy text</button>
+    <button id="reactAction" type="button">☺ React</button>
+    <button id="pinAction" type="button">📌 Pin message</button>
+    <button id="deleteAction" type="button">⌫ Delete</button>
+  </div>
+
+  <!-- Pin confirmation -->
+  <div id="pinConfirmModal">
+    <div class="confirm-modal">
+      <h3>📌 Pin Message?</h3>
+      <p>This message will appear at the top of the chat for everyone in this conversation.</p>
+      <div class="modal-actions">
+        <button id="cancelPinBtn" type="button">Cancel</button>
+        <button id="confirmPinBtn" class="confirm" type="button">Pin</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete-account password confirmation -->
+  <div id="deletePasswordModal">
+    <div class="confirm-modal">
+      <h3>Delete account?</h3>
+      <p>Enter your password to confirm account deletion. This action cannot be undone.</p>
+      <input id="deleteAccountPassword" type="password" placeholder="Your password" autocomplete="current-password">
+      <div class="modal-actions">
+        <button id="cancelDeletePassword" type="button">Cancel</button>
+        <button id="confirmDeletePassword" class="danger-button" type="button">Delete account</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Image preview -->
+  <div id="photoPreviewModal">
+    <div class="photo-preview-card">
+      <div class="modal-actions" style="margin-top:0">
+        <strong>Preview attachment</strong>
+        <button id="closePhotoPreview" type="button" aria-label="Close preview">×</button>
+      </div>
+      <img id="photoPreviewImage" alt="Selected image preview">
+      <div class="photo-preview-footer">
+        <span id="photoPreviewName"></span>
+        <div id="photoUploadProgress">
+          <svg id="photoProgressCircle" viewBox="0 0 36 36" aria-hidden="true">
+            <circle cx="18" cy="18" r="15" fill="none" stroke="rgba(255,255,255,.15)" stroke-width="3"></circle>
+            <circle cx="18" cy="18" r="15" fill="none" stroke="#6da8ff" stroke-width="3" stroke-dasharray="94" stroke-dashoffset="94"></circle>
+          </svg>
+          <span id="photoProgressText">0%</span>
+        </div>
+        <button id="sendPhotoButton" class="primary-button" type="button" aria-label="Send attachment">➤</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reaction picker -->
+  <div id="reactionPicker">
+    <button type="button" data-reaction="❤️" aria-label="Heart">❤️</button>
+    <button type="button" data-reaction="😂" aria-label="Laugh">😂</button>
+    <button type="button" data-reaction="👍" aria-label="Like">👍</button>
+    <button type="button" data-reaction="😮" aria-label="Wow">😮</button>
+    <button type="button" data-reaction="😢" aria-label="Sad">😢</button>
+  </div>
+
+  <!-- Forward message -->
+  <div id="forwardModal">
+    <div class="forward-card">
+      <div class="modal-actions" style="margin-top:0">
+        <h2 style="margin:0 auto 0 0;font-size:18px">Forward message</h2>
+        <button id="closeForwardModal" type="button" aria-label="Close forwarding">×</button>
+      </div>
+      <div id="forwardMessagePreview"></div>
+      <div id="forwardChatList"></div>
+      <div class="modal-actions">
+        <button id="confirmForwardButton" class="confirm" type="button" disabled>Send</button>
+      </div>
+    </div>
+  </div>
+
   <script type="module" src="app.js"></script>
-
-  <!-- PIN CONFIRMATION MODAL -->
-<div id="pinConfirmModal" class="pin-confirm-modal">
-  <div class="pin-confirm-box">
-    <div class="pin-confirm-icon">📌</div>
-    <h3>Pin Message?</h3>
-    <p>Are you sure you want to pin this message?</p>
-
-    <div class="pin-confirm-actions">
-      <button id="cancelPinBtn">Cancel</button>
-      <button id="confirmPinBtn">Pin</button>
-    </div>
-  </div>
-</div>
-
-  <!-- MESSAGE ACTION MENU -->
-<div id="messageActionMenu" class="message-action-menu">
-  <button id="forwardAction">➦ Forward</button>
-  <button id="replyAction">↩ Reply</button>
-  <button id="copyAction">📋 Copy</button>
-  <button id="pinAction">📌 Pin</button>
-  <button id="reactAction">😊 React</button>
-  <button id="deleteAction">🗑 Delete</button>
-</div>
-
-
-<!-- Delete Account Password Modal -->
-<div id="deletePasswordModal" class="modal">
-  <div class="modal-content delete-password-card">
-    <h3>🔐 Confirm Account Deletion</h3>
-    <p>Enter your password to permanently delete your account and private chats.</p>
-
-    <div class="password-field">
-      <input
-        type="password"
-        id="deleteAccountPassword"
-        placeholder="Enter your password"
-        autocomplete="current-password"
-      >
-      <button type="button" class="toggle-password" data-target="deleteAccountPassword">Show Password</button>
-    </div>
-
-    <div class="modal-actions">
-      <button id="cancelDeletePassword">Cancel</button>
-      <button id="confirmDeletePassword" class="danger-btn">
-        Delete Account
-      </button>
-    </div>
-  </div>
-</div>
-
-
-<!-- PHOTO PREVIEW MODAL -->
-<div id="photoPreviewModal" class="photo-preview-modal">
-  <div class="photo-preview-box">
-    <div class="photo-preview-header">
-      <span>Preview Photo</span>
-      <button type="button" id="closePhotoPreview">✕</button>
-    </div>
-
-    <div class="photo-preview-content">
-      <img id="photoPreviewImage" alt="Selected photo preview">
-    </div>
-
-    <div class="photo-preview-footer">
-      <span id="photoPreviewName"></span>
-      <button type="button" id="sendPhotoButton">Send ➤</button>
-    </div>
-
-    <div id="photoUploadProgress" class="photo-upload-progress">
-      <div class="photo-progress-circle">
-        <svg viewBox="0 0 100 100">
-          <circle class="progress-bg" cx="50" cy="50" r="42"/>
-          <circle id="photoProgressCircle" class="progress-value"
-            cx="50" cy="50" r="42"/>
-        </svg>
-        <span id="photoProgressText">0%</span>
-      </div>
-      <p>Uploading photo...</p>
-    </div>
-  </div>
-</div>
-
 </body>
 </html>

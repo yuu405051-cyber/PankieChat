@@ -1,147 +1,149 @@
+const admin = require("firebase-admin");
+const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
 
-const {
-  initializeApp,
-  cert,
-  getApps
-} = require("firebase-admin/app");
-
-const { getAuth } = require("firebase-admin/auth");
-const { getDatabase } = require("firebase-admin/database");
-
-const {
-  S3Client,
-  GetObjectCommand
-} = require("@aws-sdk/client-s3");
-
-if (!getApps().length) {
-  initializeApp({
-    credential: cert(
-      JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
-    ),
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n")
+    }),
     databaseURL: process.env.FIREBASE_DATABASE_URL
   });
 }
 
-const db = getDatabase();
+const db = admin.database();
 
 const s3 = new S3Client({
   endpoint: process.env.B2_ENDPOINT,
-  region: process.env.B2_REGION,
+  region: process.env.B2_REGION || "eu-central-003",
   credentials: {
-    accessKeyId: process.env.B2_APPLICATION_KEY_ID,
+    accessKeyId: process.env.B2_KEY_ID,
     secretAccessKey: process.env.B2_APPLICATION_KEY
   }
 });
 
+const MAX_BYTES = 4 * 1024 * 1024;
+
+function response(statusCode, body) {
+  return {
+    statusCode,
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store"
+    },
+    body: JSON.stringify(body)
+  };
+}
+
+async function bodyToBuffer(body, maxBytes) {
+  const chunks = [];
+  let total = 0;
+
+  for await (const chunk of body) {
+    total += chunk.length;
+    if (total > maxBytes) {
+      throw new Error("FILE_TOO_LARGE");
+    }
+    chunks.push(chunk);
+  }
+
+  return Buffer.concat(chunks);
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") {
-    return { statusCode: 405, body: "Method not allowed" };
+    return response(405, { error: "Method not allowed" });
   }
 
   try {
-    const authHeader =
-      event.headers.authorization ||
-      event.headers.Authorization;
+    const authHeader = event.headers.authorization || event.headers.Authorization || "";
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+    if (!match) return response(401, { error: "Authentication required" });
 
-    if (!authHeader?.startsWith("Bearer ")) {
-      return { statusCode: 401, body: "Authentication required" };
+    const decoded = await admin.auth().verifyIdToken(match[1]);
+    const uid = decoded.uid;
+
+    const payload = JSON.parse(event.body || "{}");
+    const { key, roomType, roomId, messageId } = payload;
+
+    if (!key || !roomType || !roomId || !messageId) {
+      return response(400, { error: "Missing download details" });
     }
 
-    const decoded = await getAuth().verifyIdToken(
-      authHeader.slice(7)
-    );
-
-    const { key, roomType, roomId, messageId } =
-      JSON.parse(event.body || "{}");
-
-    if (
-      typeof key !== "string" ||
-      typeof roomId !== "string" ||
-      typeof messageId !== "string" ||
-      !["general", "private"].includes(roomType)
-    ) {
-      return { statusCode: 400, body: "Invalid request" };
+    if (typeof key !== "string" || !key.startsWith("uploads/") || key.includes("..")) {
+      return response(400, { error: "Invalid media key" });
     }
 
-    let messagePath;
+    let allowed = false;
+    let allowedUploaderPrefix = `uploads/${uid}/`;
 
-    if (roomType === "general") {
-      messagePath = `rooms/general/messages/${messageId}`;
+    if (roomType === "general" && roomId === "general") {
+      const messageSnap = await db.ref(
+        `rooms/general/messages/${messageId}`
+      ).get();
+
+      if (messageSnap.exists()) {
+        const message = messageSnap.val();
+        allowed = message?.media?.key === key;
+        allowedUploaderPrefix = `uploads/${message?.uid}/`;
+      }
+    } else if (roomType === "private") {
+      const parts = String(roomId).split("_");
+
+      if (
+        parts.length !== 2 ||
+        parts[0] === parts[1] ||
+        !parts.includes(uid)
+      ) {
+        return response(403, { error: "Invalid private chat" });
+      }
+
+      const peerUid = parts.find((part) => part !== uid);
+
+      const [myChat, peerChat, messageSnap] = await Promise.all([
+        db.ref(`userChats/${uid}/${roomId}`).get(),
+        db.ref(`userChats/${peerUid}/${roomId}`).get(),
+        db.ref(`privateChats/${roomId}/messages/${messageId}`).get()
+      ]);
+
+      if (!myChat.exists() || !peerChat.exists()) {
+        return response(403, { error: "You are not a member of this chat" });
+      }
+
+      if (messageSnap.exists()) {
+        const message = messageSnap.val();
+        allowed = message?.media?.key === key;
+        allowedUploaderPrefix = `uploads/${message?.uid}/`;
+      }
     } else {
-      const chatSnapshot = await db.ref(
-        `userChats/${decoded.uid}/${roomId}`
-      ).get();
-
-      const chat = chatSnapshot.val();
-
-      if (!chat?.peerUid) {
-        return { statusCode: 403, body: "Access denied" };
-      }
-
-      const expectedRoomId = [
-        decoded.uid,
-        chat.peerUid
-      ].sort().join("_");
-
-      if (roomId !== expectedRoomId) {
-        return { statusCode: 403, body: "Access denied" };
-      }
-
-      const peerSnapshot = await db.ref(
-        `userChats/${chat.peerUid}/${roomId}/peerUid`
-      ).get();
-
-      if (peerSnapshot.val() !== decoded.uid) {
-        return { statusCode: 403, body: "Access denied" };
-      }
-
-      messagePath = `privateChats/${roomId}/messages/${messageId}`;
+      return response(400, { error: "Invalid chat destination" });
     }
 
-    const messageSnapshot = await db.ref(messagePath).get();
-    const message = messageSnapshot.val();
-
-    if (
-      !message ||
-      !message.uid ||
-      message.media?.key !== key ||
-      !key.startsWith(`uploads/${message.uid}/`)
-    ) {
-      return { statusCode: 403, body: "Access denied" };
+    if (!allowed || !key.startsWith(allowedUploaderPrefix)) {
+      return response(403, { error: "Media access denied" });
     }
 
     const result = await s3.send(new GetObjectCommand({
-      Bucket: process.env.B2_BUCKET,
+      Bucket: process.env.B2_BUCKET_NAME,
       Key: key
     }));
 
-    const bytes = await result.Body.transformToByteArray();
-    console.log("B2 DOWNLOAD DEBUG:", {
-      contentType: result.ContentType,
-      size: bytes.length,
-      keyFound: !!result.ContentType
-    });
+    const buffer = await bodyToBuffer(result.Body, MAX_BYTES);
 
-    if (bytes.length > 4 * 1024 * 1024) {
-      return { statusCode: 413, body: "File too large" };
+    return response(200, {
+      ok: true,
+      fileName: key.split("/").pop(),
+      contentType: result.ContentType || "application/octet-stream",
+      size: buffer.length,
+      base64: buffer.toString("base64")
+    });
+  } catch (error) {
+    if (error.message === "FILE_TOO_LARGE") {
+      return response(413, { error: "File is larger than 4 MB" });
     }
 
-    return {
-      statusCode: 200,
-      isBase64Encoded: true,
-      headers: {
-        "Content-Type": result.ContentType || "application/octet-stream",
-        "Cache-Control": "private, no-store"
-      },
-      body: Buffer.from(bytes).toString("base64")
-    };
-
-  } catch (error) {
-    console.error("B2 download error:", error.message);
-
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: "Download failed" })
-    };
+    console.error("B2 download error:", error);
+    return response(500, { error: "Download failed" });
   }
 };
