@@ -894,13 +894,18 @@ async function downloadAndDisplayMedia(wrapper, data, messageId, roomSnapshot = 
   try {
     if (!roomSnapshot) throw new Error("Chat is no longer active.");
     const token = await currentUser.getIdToken();
-    const response = await fetch("/.netlify/functions/b2-download", {
-      method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
-      body:JSON.stringify({
-        key:data.media.key,
-        roomType:roomSnapshot.type,
-        roomId:roomSnapshot.id,
+    const response = await fetch("/.netlify/functions/b2-upload", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        fileName,
+        contentType: file.type,
+        base64,
+        roomType: roomSnapshot.type,
+        roomId: roomSnapshot.id,
         messageId
       })
     });
