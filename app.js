@@ -64,6 +64,14 @@ const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const el = id => document.getElementById(id);
 
 const dom = {
+  photoModal: el("photoModal"),
+  photoImage: el("photoImage"),
+  photoName: el("photoName"),
+  closePhoto: el("closePhoto"),
+  sendPhoto: el("sendPhoto"),
+  photoProgress: el("photoProgress"),
+  photoProgressText: el("photoProgressText"),
+  photoProgressCircle: el("photoProgressCircle"),
   splash: el("splashScreen"), auth: el("authScreen"), app: el("app"),
   email: el("authEmail"), password: el("authPassword"),
   login: el("loginBtn"), register: el("registerBtn"), authMessage: el("authMessage"),
@@ -889,39 +897,52 @@ async function uploadToB2(file, roomSnapshot, onProgress = () => {}) {
   return result;
 }
 
+
 async function downloadAndDisplayMedia(wrapper, data, messageId, roomSnapshot = activeRoom) {
   const placeholder = $(".media-loading", wrapper);
+
   try {
-    if (!roomSnapshot) throw new Error("Chat is no longer active.");
+    if (!roomSnapshot || !data.media?.key) {
+      throw new Error("Media information is missing.");
+    }
+
     const token = await currentUser.getIdToken();
-    const response = await fetch("/.netlify/functions/b2-upload", {
+
+    const response = await fetch("/.netlify/functions/b2-download", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${token}`
       },
       body: JSON.stringify({
-        fileName,
-        contentType: file.type,
-        base64,
+        key: data.media.key,
         roomType: roomSnapshot.type,
         roomId: roomSnapshot.id,
         messageId
       })
     });
+
     const result = await response.json().catch(() => ({}));
+
     if (!response.ok || result.ok !== true || !result.base64) {
       throw new Error(result.error || "Download failed.");
     }
+
     const binary = atob(result.base64);
     const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+
     const type = result.contentType || data.media.contentType || "application/octet-stream";
-    const blob = new Blob([bytes], {type});
+    const blob = new Blob([bytes], { type });
     const url = URL.createObjectURL(blob);
+
     currentMediaUrls.add(url);
 
     let node;
+
     if (type.startsWith("image/")) {
       node = document.createElement("img");
       node.className = "chat-media-image";
@@ -944,7 +965,9 @@ async function downloadAndDisplayMedia(wrapper, data, messageId, roomSnapshot = 
       node.download = result.fileName || data.media.name || "download";
       node.textContent = `📎 ${result.fileName || data.media.name || "Download file"}`;
     }
+
     placeholder?.replaceWith(node);
+
   } catch (e) {
     console.error("Media download:", e);
     if (placeholder) placeholder.textContent = "Attachment unavailable";
