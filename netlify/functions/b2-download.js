@@ -116,6 +116,11 @@ exports.handler = async (event) => {
     }));
 
     const bytes = await result.Body.transformToByteArray();
+    console.log("B2 DOWNLOAD DEBUG:", {
+      contentType: result.ContentType,
+      size: bytes.length,
+      keyFound: !!result.ContentType
+    });
 
     if (bytes.length > 4 * 1024 * 1024) {
       return { statusCode: 413, body: "File too large" };
