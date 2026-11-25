@@ -1949,31 +1949,33 @@ if (data.media?.key) {
   const mediaBox = document.createElement("div");
   mediaBox.className = "message-media";
 
-  const downloadMedia = async () => {
-    const token = await currentUser.getIdToken();
+  
+const downloadMedia = async () => {
+  const token = await currentUser.getIdToken();
 
-    const response = await fetch("/.netlify/functions/b2-download", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        key: data.media.key,
-        roomType,
-        roomId,
-        messageId: snapshot.key
-      })
-    });
+  const response = await fetch("/.netlify/functions/b2-download", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`
+    },
+    body: JSON.stringify({
+      key: data.media.key,
+      roomType,
+      roomId,
+      messageId: snapshot.key
+    })
+  });
 
-    const result = await response.json();
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || "Download failed");
+  }
 
-    if (!response.ok) {
-      throw new Error(result.error || "Download failed");
-    }
+  const blob = await response.blob();
 
-    return result.url;
-  };
+  return URL.createObjectURL(blob);
+};
 
   const type = data.media.contentType || "";
 
@@ -1987,7 +1989,10 @@ if (data.media?.key) {
       .then(url => {
         image.src = url;
       })
-      .catch(console.error);
+      .catch(error => {
+        console.error("Image Display Error:", error);
+        image.alt = "Image could not be loaded";
+      });
 
     mediaBox.appendChild(image);
 
@@ -2001,9 +2006,9 @@ if (data.media?.key) {
       .then(url => {
         video.src = url;
       })
-      .catch(console.error);
-
-    mediaBox.appendChild(video);
+      .catch(error => {
+        console.error("Video Display Error:", error);
+      });
 
   } else {
     const fileButton = document.createElement("button");

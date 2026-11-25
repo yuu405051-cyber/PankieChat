@@ -13,18 +13,16 @@ const {
   GetObjectCommand
 } = require("@aws-sdk/client-s3");
 
-const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
-
 if (!getApps().length) {
-  const serviceAccount = JSON.parse(
-    process.env.FIREBASE_SERVICE_ACCOUNT
-  );
-
   initializeApp({
-    credential: cert(serviceAccount),
+    credential: cert(
+      JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+    ),
     databaseURL: process.env.FIREBASE_DATABASE_URL
   });
 }
+
+const db = getDatabase();
 
 const s3 = new S3Client({
   endpoint: process.env.B2_ENDPOINT,
@@ -65,18 +63,15 @@ exports.handler = async (event) => {
       return { statusCode: 400, body: "Invalid request" };
     }
 
-    const db = getDatabase();
-
     let messagePath;
 
     if (roomType === "general") {
       messagePath = `rooms/general/messages/${messageId}`;
     } else {
-      const chatRef = db.ref(
+      const chatSnapshot = await db.ref(
         `userChats/${decoded.uid}/${roomId}`
-      );
+      ).get();
 
-      const chatSnapshot = await chatRef.get();
       const chat = chatSnapshot.val();
 
       if (!chat?.peerUid) {
@@ -115,21 +110,25 @@ exports.handler = async (event) => {
       return { statusCode: 403, body: "Access denied" };
     }
 
-    const command = new GetObjectCommand({
+    const result = await s3.send(new GetObjectCommand({
       Bucket: process.env.B2_BUCKET,
       Key: key
-    });
+    }));
 
-    const url = await getSignedUrl(s3, command, {
-      expiresIn: 60
-    });
+    const bytes = await result.Body.transformToByteArray();
+
+    if (bytes.length > 4 * 1024 * 1024) {
+      return { statusCode: 413, body: "File too large" };
+    }
 
     return {
       statusCode: 200,
+      isBase64Encoded: true,
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": result.ContentType || "application/octet-stream",
+        "Cache-Control": "private, no-store"
       },
-      body: JSON.stringify({ success: true, url })
+      body: Buffer.from(bytes).toString("base64")
     };
 
   } catch (error) {
