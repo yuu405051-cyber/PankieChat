@@ -49,6 +49,14 @@ let photoUploading = false;
 let currentMediaUrls = new Set();
 let messageCache = new Map();
 let searchRequest = 0;
+let chatTypingStops = [];
+let chatTypingState = {};
+let cachedChats = [];
+let chatTypingSignature = "";
+
+const pankieProgressStyle = document.createElement("style");
+pankieProgressStyle.textContent = "\n/* PankieChat upload progress ring fallback */\n#photoUploadProgress.uploading, #photoUploadProgress[style*=\"flex\"] {\n  align-items:center; justify-content:center; gap:12px;\n}\n#photoProgressCircle {\n  --progress:0deg; width:54px; height:54px; flex:0 0 54px;\n  border-radius:50%; display:grid; place-items:center; position:relative;\n  background:conic-gradient(#69b7ff var(--progress),rgba(255,255,255,.13) 0deg);\n  box-shadow:0 0 18px rgba(80,165,255,.18);\n}\n#photoProgressCircle::before {\n  content:\"\"; position:absolute; inset:5px; border-radius:50%;\n  background:#101a2c;\n}\n#photoProgressText {\n  position:relative; z-index:1; color:#fff; font-size:12px;\n  font-weight:700; font-variant-numeric:tabular-nums;\n}\n#typingIndicator {\n  display:none; align-items:center; gap:6px;\n}\n";
+document.head.appendChild(pankieProgressStyle);
 
 /* 3. DOM HELPERS */
 const $ = (s, root = document) => root.querySelector(s);
@@ -127,6 +135,8 @@ function roomMetaPath() {
 }
 function pinPath() { return `${roomMetaPath()}/pinnedMessage`; }
 function cleanRoom() {
+  clearTimeout(typingTimer);
+  if (activeRoom?.type === "private" && currentUser) setTyping(false).catch(() => {});
   stopAll(roomStops);
   messageCache.clear();
   for (const url of currentMediaUrls) URL.revokeObjectURL(url);
@@ -308,9 +318,28 @@ function listenChatList() {
       if (d?.peerUid) chats.push({id:child.key, ...d});
     });
     chats.sort((a,b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0));
+    cachedChats = chats;
     renderChatList(chats);
+    watchChatTyping(chats);
   }, console.error));
 }
+function watchChatTyping(chats) {
+  const signature = chats.map(c => `${c.id}:${c.peerUid}`).sort().join("|");
+  if (signature === chatTypingSignature) return;
+  chatTypingSignature = signature;
+  chatTypingStops.forEach(stop => { try { stop(); } catch {} });
+  chatTypingStops = [];
+  chatTypingState = {};
+  chats.forEach(c => {
+    const typingRef = ref(db, `privateChats/${c.id}/typing/${c.peerUid}`);
+    const stop = onValue(typingRef, snap => {
+      chatTypingState[c.id] = snap.val()?.isTyping === true;
+      renderChatList(cachedChats);
+    }, console.error);
+    chatTypingStops.push(stop);
+  });
+}
+
 function renderChatList(chats = []) {
   if (!dom.chatList) return;
   dom.chatList.innerHTML = "";
@@ -329,7 +358,7 @@ function renderChatList(chats = []) {
     item.innerHTML = `${avatarHTML(n,c.peerPhoto || "")}
       <div class="chat-item-info"><div class="chat-item-top"><strong>${esc(n)}</strong>
       <span class="chat-time">${timeOf(c.lastMessageAt)}</span></div>
-      <div class="chat-item-bottom"><span class="last-message">${esc(c.lastMessage || "Start a conversation")}</span>
+      <div class="chat-item-bottom"><span class="last-message">${esc(chatTypingState[c.id] ? "Typing…" : (c.lastMessage || "Start a conversation"))}</span>
       ${unread ? `<span class="unread-badge">${unread > 99 ? "99+" : unread}</span>` : ""}</div></div>`;
     item.addEventListener("click", () => openPrivateChat(c.peerUid, {
       name:c.peerName || "User", username:c.peerUsername || "", photoURL:c.peerPhoto || ""
@@ -481,19 +510,32 @@ async function searchUsers(q) {
 /* 9. TYPING */
 function setTyping(value) {
   if (!activeRoom || activeRoom.type !== "private" || !currentUser) return Promise.resolve();
-  const r = ref(db, `privateChats/${activeRoom.id}/typing/${currentUser.uid}`);
-  return value ? set(r,{isTyping:true,updatedAt:Date.now()}) : remove(r);
+  const roomId = activeRoom.id;
+  const typingRef = ref(db, `privateChats/${roomId}/typing/${currentUser.uid}`);
+  return value
+    ? set(typingRef, {isTyping:true, updatedAt:Date.now()})
+    : remove(typingRef);
 }
 function listenPeerTyping(uid) {
+  const indicator = el("typingIndicator");
   listen(roomStops, onValue(ref(db, `privateChats/${activeRoom.id}/typing/${uid}`), snap => {
-    if (dom.typing) dom.typing.textContent = snap.val()?.isTyping ? "typing…" : "";
+    const isTyping = snap.val()?.isTyping === true;
+    if (dom.typing) dom.typing.textContent = isTyping ? "typing…" : "";
+    if (indicator) {
+      indicator.textContent = isTyping ? "Typing…" : "";
+      indicator.style.display = isTyping ? "flex" : "none";
+    }
   }, console.error));
 }
 dom.input?.addEventListener("input", () => {
   if (activeRoom?.type !== "private") return;
   setTyping(true).catch(console.error);
   clearTimeout(typingTimer);
-  typingTimer = setTimeout(() => setTyping(false).catch(console.error), 1300);
+  typingTimer = setTimeout(() => setTyping(false).catch(console.error), 1800);
+});
+window.addEventListener("beforeunload", () => {
+  clearTimeout(typingTimer);
+  if (currentUser && activeRoom?.type === "private") setTyping(false).catch(() => {});
 });
 
 /* 10. MESSAGE RENDERING */
@@ -539,7 +581,7 @@ function renderMessage(id, data) {
   const typing = $("#typingIndicator");
   if (typing?.parentNode === dom.messages) dom.messages.insertBefore(wrapper, typing);
   else dom.messages.appendChild(wrapper);
-  if (data.media?.key) downloadAndDisplayMedia(wrapper, data, id);
+  if (data.media?.key) downloadAndDisplayMedia(wrapper, data, id, {...activeRoom});
 }
 function listenMessages() {
   const path = activePath();
@@ -628,7 +670,6 @@ async function updateChatMetadata(lastMessage, timestamp) {
   updates[`userChats/${currentUser.uid}/${activeRoom.id}/lastMessageAt`] = timestamp;
   updates[`userChats/${activeRoom.peerUid}/${activeRoom.id}/lastMessage`] = lastMessage;
   updates[`userChats/${activeRoom.peerUid}/${activeRoom.id}/lastMessageAt`] = timestamp;
-  updates[`userChats/${activeRoom.peerUid}/${activeRoom.id}/unreadCount`] = null;
   await update(ref(db),updates);
   const peerUnreadRef = ref(db,`userChats/${activeRoom.peerUid}/${activeRoom.id}/unreadCount`);
   await runUnreadIncrement(peerUnreadRef);
@@ -807,56 +848,104 @@ function fileToBase64(file) {
     reader.readAsDataURL(file);
   });
 }
-async function uploadToB2(file) {
-  if(!currentUser||!activeRoom)throw new Error("Select a chat first.");
-  if(file.size===0||file.size>MAX_MEDIA_SIZE)throw new Error("File must be 4 MB or smaller.");
-  const token=await currentUser.getIdToken();
-  const fileData=await fileToBase64(file);
-  const response=await fetch("/.netlify/functions/b2-upload",{
-    method:"POST",
-    headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
-    body:JSON.stringify({
-      fileName:file.name,contentType:file.type,fileData,
-      roomType:activeRoom.type,roomId:activeRoom.id
-    })
+async function uploadToB2(file, roomSnapshot, onProgress = () => {}) {
+  if (!currentUser || !roomSnapshot) throw new Error("Select a chat first.");
+  if (file.size === 0 || file.size > MAX_MEDIA_SIZE) throw new Error("File must be 4 MB or smaller.");
+
+  const token = await currentUser.getIdToken();
+  const base64 = await fileToBase64(file);
+  const messageId = push(ref(db, roomSnapshot.type === "general"
+    ? "rooms/general/messages"
+    : `privateChats/${roomSnapshot.id}/messages`)).key;
+
+  const payload = {
+    fileName: file.name,
+    contentType: file.type || "application/octet-stream",
+    base64,
+    roomType: roomSnapshot.type,
+    roomId: roomSnapshot.id,
+    messageId
+  };
+
+  const result = await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/.netlify/functions/b2-upload");
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.upload.addEventListener("progress", event => {
+      if (event.lengthComputable) onProgress(Math.round(event.loaded / event.total * 100));
+    });
+    xhr.onload = () => {
+      let body = {};
+      try { body = JSON.parse(xhr.responseText || "{}"); } catch {}
+      if (xhr.status >= 200 && xhr.status < 300 && body.ok === true) resolve(body);
+      else reject(new Error(body.error || `Upload failed (HTTP ${xhr.status}).`));
+    };
+    xhr.onerror = () => reject(new Error("Network error while uploading. Check your phone connection."));
+    xhr.onabort = () => reject(new Error("Upload was cancelled."));
+    xhr.send(JSON.stringify(payload));
   });
-  const result=await response.json().catch(()=>({}));
-  if(!response.ok||!result.success)throw new Error(result.error || "Upload failed.");
+  onProgress(100);
   return result;
 }
-async function downloadAndDisplayMedia(wrapper,data,messageId) {
-  const placeholder=$(".media-loading",wrapper);
-  try{
-    const token=await currentUser.getIdToken();
-    const response=await fetch("/.netlify/functions/b2-download",{
+
+async function downloadAndDisplayMedia(wrapper, data, messageId, roomSnapshot = activeRoom) {
+  const placeholder = $(".media-loading", wrapper);
+  try {
+    if (!roomSnapshot) throw new Error("Chat is no longer active.");
+    const token = await currentUser.getIdToken();
+    const response = await fetch("/.netlify/functions/b2-download", {
       method:"POST",
       headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
       body:JSON.stringify({
-        key:data.media.key,roomType:activeRoom.type,
-        roomId:activeRoom.id,messageId
+        key:data.media.key,
+        roomType:roomSnapshot.type,
+        roomId:roomSnapshot.id,
+        messageId
       })
     });
-    if(!response.ok)throw new Error("Download failed.");
-    const blob=await response.blob();
-    const url=URL.createObjectURL(blob);
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.ok !== true || !result.base64) {
+      throw new Error(result.error || "Download failed.");
+    }
+    const binary = atob(result.base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const type = result.contentType || data.media.contentType || "application/octet-stream";
+    const blob = new Blob([bytes], {type});
+    const url = URL.createObjectURL(blob);
     currentMediaUrls.add(url);
-    const type=data.media.contentType || blob.type;
+
     let node;
-    if(type.startsWith("image/")){
-      node=document.createElement("img");node.className="chat-media-image";node.alt=data.media.name || "Image";node.src=url;
-    }else if(type.startsWith("video/")){
-      node=document.createElement("video");node.className="chat-media-video";node.controls=true;node.src=url;
-    }else if(type.startsWith("audio/")){
-      node=document.createElement("audio");node.controls=true;node.src=url;
-    }else{
-      node=document.createElement("a");node.className="chat-file-link";node.href=url;node.download=data.media.name || "download";node.textContent=`📎 ${data.media.name || "Download file"}`;
+    if (type.startsWith("image/")) {
+      node = document.createElement("img");
+      node.className = "chat-media-image";
+      node.alt = result.fileName || data.media.name || "Image";
+      node.src = url;
+    } else if (type.startsWith("video/")) {
+      node = document.createElement("video");
+      node.className = "chat-media-video";
+      node.controls = true;
+      node.playsInline = true;
+      node.src = url;
+    } else if (type.startsWith("audio/")) {
+      node = document.createElement("audio");
+      node.controls = true;
+      node.src = url;
+    } else {
+      node = document.createElement("a");
+      node.className = "chat-file-link";
+      node.href = url;
+      node.download = result.fileName || data.media.name || "download";
+      node.textContent = `📎 ${result.fileName || data.media.name || "Download file"}`;
     }
     placeholder?.replaceWith(node);
-  }catch(e){
-    console.error("Media download:",e);
-    if(placeholder)placeholder.textContent="Attachment unavailable";
+  } catch (e) {
+    console.error("Media download:", e);
+    if (placeholder) placeholder.textContent = "Attachment unavailable";
   }
 }
+
 function openPhotoPreview(file) {
   selectedMediaFile=file;
   if(dom.photoImage)dom.photoImage.src=URL.createObjectURL(file);
@@ -886,30 +975,51 @@ dom.documentInput?.addEventListener("change",async()=>{
   await sendAttachment(f);dom.documentInput.value="";
 });
 async function sendAttachment(file) {
-  if(photoUploading||!activeRoom)return;
-  photoUploading=true;
+  if (photoUploading || !activeRoom || !currentUser) return;
+  photoUploading = true;
   const roomAtStart = {...activeRoom};
-  if(dom.sendPhoto)dom.sendPhoto.disabled=true;
-  try{
-    const result = await uploadToB2(file);
-    const now = Date.now();
-    const preview = file.name || "Attachment";
-    if (roomAtStart.type === "private") {
-      const updates = {};
-      updates[`userChats/${currentUser.uid}/${roomAtStart.id}/lastMessage`] = preview;
-      updates[`userChats/${currentUser.uid}/${roomAtStart.id}/lastMessageAt`] = now;
-      updates[`userChats/${roomAtStart.peerUid}/${roomAtStart.id}/lastMessage`] = preview;
-      updates[`userChats/${roomAtStart.peerUid}/${roomAtStart.id}/lastMessageAt`] = now;
-      await update(ref(db), updates);
-      await runUnreadIncrement(ref(db,`userChats/${roomAtStart.peerUid}/${roomAtStart.id}/unreadCount`));
+  if (dom.sendPhoto) dom.sendPhoto.disabled = true;
+
+  const setProgress = percent => {
+    const p = Math.max(0, Math.min(100, Number(percent) || 0));
+    if (dom.photoProgressText) dom.photoProgressText.textContent = `${p}%`;
+    if (dom.photoProgressCircle) {
+      dom.photoProgressCircle.style.setProperty("--progress", `${p * 3.6}deg`);
+      dom.photoProgressCircle.style.background =
+        `conic-gradient(#69b7ff ${p * 3.6}deg, rgba(255,255,255,.13) 0deg)`;
     }
-    if(dom.photoProgressText)dom.photoProgressText.textContent="100%";
-    if(dom.photoProgressCircle)dom.photoProgressCircle.style.setProperty("--progress","360deg");
-    if (activeRoom?.id === roomAtStart.id) closePhotoPreview();
-    renderChatListFromDb();
-  }catch(e){console.error(e);notify(e.message || "Upload failed.");}
-  finally{photoUploading=false;if(dom.sendPhoto)dom.sendPhoto.disabled=false;}
+  };
+
+  if (file.type.startsWith("image/")) {
+    show(dom.photoProgress, "flex");
+    dom.photoProgress?.classList.add("uploading");
+    setProgress(0);
+  }
+
+  try {
+    await uploadToB2(file, roomAtStart, setProgress);
+    setProgress(100);
+    if (roomAtStart.type === "private") {
+      // The b2-upload function writes the message, chat preview and unread count.
+      // Do not increment unread again here.
+      await renderChatListFromDb();
+    }
+    if (activeRoom?.id === roomAtStart.id && file.type.startsWith("image/")) {
+      closePhotoPreview();
+    }
+  } catch (e) {
+    console.error("Attachment upload:", e);
+    notify(e.message || "Upload failed.");
+  } finally {
+    photoUploading = false;
+    if (dom.sendPhoto) dom.sendPhoto.disabled = false;
+    if (dom.photoProgress) {
+      dom.photoProgress.classList.remove("uploading");
+      hide(dom.photoProgress);
+    }
+  }
 }
+
 dom.sendPhoto?.addEventListener("click",async()=>{
   if(!selectedMediaFile||photoUploading)return;
   await sendAttachment(selectedMediaFile);
@@ -983,6 +1093,8 @@ function bootUser() {
 }
 function bootSignedOut() {
   stopAll(roomStops);stopAll(userStops);
+  chatTypingStops.forEach(stop => { try { stop(); } catch {} });
+  chatTypingStops = []; chatTypingSignature = ""; chatTypingState = {}; cachedChats = [];
   currentUser=null;currentProfile=null;activeRoom=null;
   emptyChat();
   hide(dom.splash);show(dom.auth);hide(dom.app);
