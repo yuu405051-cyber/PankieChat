@@ -1691,3 +1691,14 @@ input::placeholder {
 .chat-file-button:hover {
   background: rgba(255,255,255,0.15);
 }
+.media-loading {
+  width: 220px;
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 13px;
+  background: rgba(255,255,255,0.07);
+  color: rgba(255,255,255,0.65);
+  font-size: 13px;
+}

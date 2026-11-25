@@ -1980,22 +1980,35 @@ const downloadMedia = async () => {
   const type = data.media.contentType || "";
 
   if (type.startsWith("image/")) {
-    const image = document.createElement("img");
-    image.alt = data.media.name || "Shared image";
-    image.loading = "lazy";
-    image.className = "chat-media-image";
+  const image = document.createElement("img");
+  image.alt = data.media.name || "Shared image";
+  image.loading = "lazy";
+  image.className = "chat-media-image";
 
-    downloadMedia()
-      .then(url => {
-        image.src = url;
-      })
-      .catch(error => {
-        console.error("Image Display Error:", error);
-        image.alt = "Image could not be loaded";
-      });
+  const loading = document.createElement("div");
+  loading.className = "media-loading";
+  loading.textContent = "Loading image...";
 
-    mediaBox.appendChild(image);
+  mediaBox.appendChild(loading);
+  mediaBox.appendChild(image);
 
+  downloadMedia()
+    .then(url => {
+      image.src = url;
+
+      image.onload = () => {
+        loading.remove();
+      };
+
+      image.onerror = () => {
+        loading.textContent = "Image could not be loaded";
+        URL.revokeObjectURL(url);
+      };
+    })
+    .catch(error => {
+      console.error("Image Display Error:", error);
+      loading.textContent = "Image could not be loaded";
+    });
   } else if (type.startsWith("video/")) {
     const video = document.createElement("video");
     video.controls = true;
