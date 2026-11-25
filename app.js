@@ -1228,6 +1228,7 @@ function listenAllChatPresence() {
 
     const stop = onValue(presenceRef, snapshot => {
       const data = snapshot.val();
+      console.log("MEDIA DEBUG:", data.media);
       const avatar = item.querySelector(".avatar");
 
       if (avatar) {
