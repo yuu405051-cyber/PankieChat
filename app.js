@@ -1943,8 +1943,95 @@ function listenMessages() {
       item.appendChild(replyBox);
     }
 
-    const messageText = document.createElement("span");
-    messageText.textContent = data.text;
+    
+if (data.media?.key) {
+  const mediaBox = document.createElement("div");
+  mediaBox.className = "message-media";
+
+  const downloadMedia = async () => {
+    const token = await currentUser.getIdToken();
+
+    const response = await fetch("/.netlify/functions/b2-download", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        key: data.media.key,
+        roomType,
+        roomId,
+        messageId: snapshot.key
+      })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(result.error || "Download failed");
+    }
+
+    return result.url;
+  };
+
+  const type = data.media.contentType || "";
+
+  if (type.startsWith("image/")) {
+    const image = document.createElement("img");
+    image.alt = data.media.name || "Shared image";
+    image.loading = "lazy";
+    image.className = "chat-media-image";
+
+    downloadMedia()
+      .then(url => {
+        image.src = url;
+      })
+      .catch(console.error);
+
+    mediaBox.appendChild(image);
+
+  } else if (type.startsWith("video/")) {
+    const video = document.createElement("video");
+    video.controls = true;
+    video.preload = "metadata";
+    video.className = "chat-media-video";
+
+    downloadMedia()
+      .then(url => {
+        video.src = url;
+      })
+      .catch(console.error);
+
+    mediaBox.appendChild(video);
+
+  } else {
+    const fileButton = document.createElement("button");
+    fileButton.type = "button";
+    fileButton.className = "chat-file-button";
+    fileButton.textContent = "📎 " + (data.media.name || data.text);
+
+    fileButton.onclick = async () => {
+      try {
+        fileButton.disabled = true;
+        const url = await downloadMedia();
+        window.open(url, "_blank", "noopener");
+      } catch (error) {
+        alert("Could not open file: " + error.message);
+      } finally {
+        fileButton.disabled = false;
+      }
+    };
+
+    mediaBox.appendChild(fileButton);
+  }
+
+  item.appendChild(mediaBox);
+
+} else {
+  const messageText = document.createElement("span");
+  messageText.textContent = data.text;
+  item.appendChild(messageText);
+}
 
     const time = document.createElement("small");
     time.textContent = new Date(data.createdAt || Date.now())
@@ -1953,7 +2040,7 @@ function listenMessages() {
         minute: "2-digit"
       });
 
-    item.append(messageText, time);
+    item.appendChild(time);
 
     if (isSent) {
       const status = document.createElement("small");
@@ -2207,23 +2294,181 @@ async function sendMessage() {
 
 sendButton.onclick = sendMessage;
 
-messageInput.addEventListener("keydown", event => {
-  if (event.key === "Enter") {
-    event.preventDefault();
-    sendMessage();
+// ATTACHMENT POPUP
+const attachButton = document.getElementById("attachButton");
+const attachmentPopup = document.getElementById("attachmentPopup");
+
+attachButton.onclick = () => {
+  if (!activeRoom || !currentUser) return;
+  attachmentPopup.classList.toggle("active");
+};
+
+// Close popup when clicking outside
+document.addEventListener("click", (event) => {
+  if (
+    !attachmentPopup.contains(event.target) &&
+    !attachButton.contains(event.target)
+  ) {
+    attachmentPopup.classList.remove("active");
   }
 });
 
-// DETECT TYPING
-messageInput.addEventListener("input", () => {
-  if (!activeRoom || activeRoom.type !== "private") return;
 
-  setTyping(messageInput.value.trim().length > 0);
-});
+// PHOTO & VIDEO PICKER
+const photoOption = document.getElementById("photoOption");
+const mediaInput = document.getElementById("mediaInput");
 
-messageInput.addEventListener("blur", () => {
-  setTyping(false);
-});
+photoOption.onclick = () => {
+  attachmentPopup.classList.remove("active");
+  mediaInput.click();
+};
+
+
+
+mediaInput.onchange = async () => {
+  const file = mediaInput.files[0];
+  if (!file) return;
+
+  if (!activeRoom || !currentUser) {
+    alert("Please open a chat first.");
+    mediaInput.value = "";
+    return;
+  }
+
+  if (file.size > 4 * 1024 * 1024) {
+    alert("File must be 4MB or smaller.");
+    mediaInput.value = "";
+    return;
+  }
+
+  try {
+    attachButton.disabled = true;
+    attachButton.textContent = "…";
+
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+
+      reader.onload = () => {
+        resolve(reader.result.split(",")[1]);
+      };
+
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+    const token = await currentUser.getIdToken();
+
+    const response = await fetch("/.netlify/functions/b2-upload", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        fileName: file.name,
+        contentType: file.type,
+        fileData: base64,
+        roomType: activeRoom.type,
+        roomId: activeRoom.id
+      })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(result.error || "Upload failed");
+    }
+
+    updateLastMessage(activeRoom.id, file.name);
+
+    attachmentPopup.classList.remove("active");
+
+    console.log("Media message sent:", result.messageId);
+
+  } catch (error) {
+    console.error("Media Upload Error:", error);
+    alert("Upload failed: " + error.message);
+  } finally {
+    attachButton.disabled = false;
+    attachButton.textContent = "＋";
+    mediaInput.value = "";
+  }
+};
+
+
+// FILE PICKER
+const fileOption = document.getElementById("fileOption");
+const documentInput = document.getElementById("documentInput");
+
+fileOption.onclick = () => {
+  attachmentPopup.classList.remove("active");
+  documentInput.click();
+};
+
+documentInput.onchange = ( ) => {
+  const file = documentInput.files[0];
+  if (!file) return;
+
+  console.log("Selected file:", file.name, file.type);
+};
+
+
+
+// LOCATION PICKER
+const locationOption = document.getElementById("locationOption");
+
+locationOption.onclick = () => {
+  attachmentPopup.classList.remove("active");
+
+  if (!navigator.geolocation) {
+    alert("Location is not supported by this browser.");
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      const latitude = position.coords.latitude;
+      const longitude = position.coords.longitude;
+
+      console.log("Location:", latitude, longitude);
+
+      alert(
+        "Location captured!\nLatitude: " +
+        latitude +
+        "\nLongitude: " +
+        longitude
+      );
+    },
+    (error) => {
+      alert("Could not get location: " + error.message);
+    }
+  );
+};
+
+
+// VOICE MESSAGE
+const voiceOption = document.getElementById("voiceOption");
+
+voiceOption.onclick = async () => {
+  attachmentPopup.classList.remove("active");
+
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    alert("Voice recording is not supported by this browser.");
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: true
+    });
+
+    stream.getTracks().forEach(track => track.stop());
+
+    alert("Microphone permission granted! Voice recording UI is next.");
+  } catch (error) {
+    alert("Microphone permission denied: " + error.message);
+  }
+};
 
 // SEARCH WINDOW
 const searchTrigger = document.getElementById("searchTrigger");
@@ -3184,7 +3429,7 @@ document.querySelectorAll(".toggle-password").forEach(button => {
 
     input.type = input.type === "password" ? "text" : "password";
     button.innerHTML = input.type === "password"
-      ? '<i class="eye-icon">Show Password👁</i>'
-      : '<i class="eye-icon">◉</i>';
+      ? '<i class="eye-icon">Show Password</i>'
+      : '<i class="eye-icon">Unshow Password</i>';
   });
 });

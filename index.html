@@ -43,7 +43,7 @@
         placeholder="Password"
         autocomplete="current-password"
       >
-      <button type="button" class="toggle-password" data-target="authPassword">👁</button>
+      <button type="button" class="toggle-password" data-target="authPassword">Show Password</button>
     </div>
 
       <button id="loginBtn">Login</button>
@@ -175,11 +175,53 @@
 
       <!-- MESSAGE INPUT -->
       <div class="message-input">
-        <button type="button">＋</button>
-        <input type="text" placeholder="Write a message...">
-        <button type="button">☺</button>
-        <button type="button" class="send">➤</button>
-      </div>
+        <button type="button" id="attachButton">＋</button>
+
+      <input
+        type="text"
+        id="messageInput"
+        placeholder="Write a message..."
+      >
+      
+      <input
+        type="file"
+        id="mediaInput"
+        accept="image/*,video/*"
+        hidden
+      >
+
+      
+      <input
+        type="file"
+        id="documentInput"
+        accept=".pdf,.doc,.docx,.txt,.zip,.xlsx,.pptx"
+        hidden
+      >
+
+      <button type="button">☺</button>
+
+      <button type="button" class="send" id="sendButton">➤</button>
+    </div>
+
+
+<!-- ATTACHMENT POPUP -->
+<div id="attachmentPopup" class="attachment-popup">
+  <button type="button" id="photoOption">
+    <span>🖼️</span> Photo & Video
+  </button>
+
+  <button type="button" id="fileOption">
+    <span>📁</span> File
+  </button>
+
+  <button type="button" id="locationOption">
+    <span>📍</span> Location
+  </button>
+
+  <button type="button" id="voiceOption">
+    <span>🎙️</span> Voice Message
+  </button>
+</div>
 
     </main>
   </div>
@@ -307,7 +349,7 @@
         placeholder="Enter your password"
         autocomplete="current-password"
       >
-      <button type="button" class="toggle-password" data-target="deleteAccountPassword">👁</button>
+      <button type="button" class="toggle-password" data-target="deleteAccountPassword">Show Password</button>
     </div>
 
     <div class="modal-actions">

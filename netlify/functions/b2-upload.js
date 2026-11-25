@@ -6,6 +6,7 @@ const {
 } = require("firebase-admin/app");
 
 const { getAuth } = require("firebase-admin/auth");
+const { getDatabase } = require("firebase-admin/database");
 
 const {
   S3Client,
@@ -14,19 +15,17 @@ const {
 
 const crypto = require("crypto");
 
-// FIREBASE ADMIN
 if (!getApps().length) {
-  const serviceAccount = JSON.parse(
-    process.env.FIREBASE_SERVICE_ACCOUNT
-  );
-
   initializeApp({
-    credential: cert(serviceAccount),
+    credential: cert(
+      JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+    ),
     databaseURL: process.env.FIREBASE_DATABASE_URL
   });
 }
 
-// BACKBLAZE B2
+const db = getDatabase();
+
 const s3 = new S3Client({
   endpoint: process.env.B2_ENDPOINT,
   region: process.env.B2_REGION,
@@ -36,7 +35,6 @@ const s3 = new S3Client({
   }
 });
 
-// UPLOAD SETTINGS
 const MAX_SIZE = 4 * 1024 * 1024;
 
 const ALLOWED_TYPES = [
@@ -51,13 +49,9 @@ const ALLOWED_TYPES = [
   "application/pdf"
 ];
 
-// UPLOAD FUNCTION
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") {
-    return {
-      statusCode: 405,
-      body: "Method not allowed"
-    };
+    return { statusCode: 405, body: "Method not allowed" };
   }
 
   try {
@@ -65,32 +59,66 @@ exports.handler = async (event) => {
       event.headers.authorization ||
       event.headers.Authorization;
 
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return {
-        statusCode: 401,
-        body: "Authentication required"
-      };
+    if (!authHeader?.startsWith("Bearer ")) {
+      return { statusCode: 401, body: "Authentication required" };
     }
 
-    const token = authHeader.slice(7);
-    const decoded = await getAuth().verifyIdToken(token);
+    const decoded = await getAuth().verifyIdToken(
+      authHeader.slice(7)
+    );
 
     const {
       fileName,
       contentType,
-      fileData
+      fileData,
+      roomType,
+      roomId
     } = JSON.parse(event.body || "{}");
 
     if (
-      !fileName ||
-      !contentType ||
-      !fileData ||
+      typeof fileName !== "string" ||
+      typeof contentType !== "string" ||
+      typeof fileData !== "string" ||
+      typeof roomId !== "string" ||
+      !["general", "private"].includes(roomType) ||
       !ALLOWED_TYPES.includes(contentType)
     ) {
-      return {
-        statusCode: 400,
-        body: "Invalid file information"
-      };
+      return { statusCode: 400, body: "Invalid file information" };
+    }
+
+    let messagePath;
+
+    if (roomType === "general") {
+      messagePath = "rooms/general/messages";
+    } else {
+      const chatSnapshot = await db.ref(
+        `userChats/${decoded.uid}/${roomId}`
+      ).get();
+
+      const chat = chatSnapshot.val();
+
+      if (!chat?.peerUid) {
+        return { statusCode: 403, body: "Access denied" };
+      }
+
+      const expectedRoomId = [
+        decoded.uid,
+        chat.peerUid
+      ].sort().join("_");
+
+      if (roomId !== expectedRoomId) {
+        return { statusCode: 403, body: "Access denied" };
+      }
+
+      const peerSnapshot = await db.ref(
+        `userChats/${chat.peerUid}/${roomId}/peerUid`
+      ).get();
+
+      if (peerSnapshot.val() !== decoded.uid) {
+        return { statusCode: 403, body: "Access denied" };
+      }
+
+      messagePath = `privateChats/${roomId}/messages`;
     }
 
     const buffer = Buffer.from(fileData, "base64");
@@ -99,10 +127,7 @@ exports.handler = async (event) => {
       buffer.length === 0 ||
       buffer.length > MAX_SIZE
     ) {
-      return {
-        statusCode: 413,
-        body: "File must be 4MB or smaller"
-      };
+      return { statusCode: 413, body: "File must be 4MB or smaller" };
     }
 
     const safeName = fileName
@@ -119,14 +144,31 @@ exports.handler = async (event) => {
       ContentType: contentType
     }));
 
+    const messageRef = db.ref(messagePath).push();
+
+    const messageData = {
+      text: fileName,
+      uid: decoded.uid,
+      senderName: "User",
+      createdAt: Date.now(),
+      status: "sent",
+      media: {
+        key,
+        name: safeName,
+        contentType,
+        size: buffer.length
+      }
+    };
+
+    await messageRef.set(messageData);
+
     return {
       statusCode: 200,
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         success: true,
-        key
+        key,
+        messageId: messageRef.key
       })
     };
 
@@ -135,9 +177,7 @@ exports.handler = async (event) => {
 
     return {
       statusCode: 500,
-      body: JSON.stringify({
-        error: "Upload failed"
-      })
+      body: JSON.stringify({ error: "Upload failed" })
     };
   }
 };
