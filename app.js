@@ -1,3 +1,4 @@
+
 import { initializeApp } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js";
 
 import {
@@ -85,61 +86,87 @@ const cancelEdit = document.querySelector("#cancelEdit");
 // STATE
 let currentUser = null;
 let currentProfile = null;
+let activeRoom = null;
 
 let stopMessages = null;
 let stopPinnedMessage = null;
 let stopPresence = null;
 let stopTyping = null;
 let stopPeerPresence = null;
+let stopUserChats = null;
+let stopGeneralPreview = null;
 
 let replyingTo = null;
 let selectedMessage = null;
 let pendingPinMessage = null;
 
 let searchRequest = 0;
-let activeRoom = null;
-
 let typingWriteQueue = Promise.resolve();
-let authInitialized = false;
 
-// SPLASH SCREEN
+const profileListeners = new Map();
+const unreadListeners = new Map();
+const chatPresenceListeners = new Map();
+const chatTypingListeners = new Map();
+const chatMessageListeners = new Map();
+
+// SPLASH
 function hideSplash() {
   if (splashScreen) {
     splashScreen.classList.add("hide");
   }
 }
 
-// CLEAN UP LISTENERS
-function stopAllListeners() {
-  [
-    "stopMessages",
-    "stopPinnedMessage",
-    "stopPresence",
-    "stopTyping",
-    "stopPeerPresence"
-  ].forEach(name => {
-    const listener = {
-      stopMessages,
-      stopPinnedMessage,
-      stopPresence,
-      stopTyping,
-      stopPeerPresence
-    }[name];
+// CLEAN UP CHAT LISTENERS
+function stopMapListeners(map) {
+  map.forEach(stop => {
+    try {
+      stop();
+    } catch (error) {
+      console.error(error);
+    }
+  });
 
-    if (listener) {
+  map.clear();
+}
+
+// CLEAN UP ALL LISTENERS
+function stopAllListeners() {
+  if (stopUserChats) {
+  stopUserChats();
+  stopUserChats = null;
+}
+
+if (stopGeneralPreview) {
+  stopGeneralPreview();
+  stopGeneralPreview = null;
+}
+  [
+    stopMessages,
+    stopPinnedMessage,
+    stopPresence,
+    stopTyping,
+    stopPeerPresence
+  ].forEach(stop => {
+    if (typeof stop === "function") {
       try {
-        listener();
+        stop();
       } catch (error) {
         console.error(error);
       }
     }
-
-    if (name === "stopMessages") stopMessages = null;
-    if (name === "stopPinnedMessage") stopPinnedMessage = null;
-    if (name === "stopPresence") stopPresence = null;
-    if (name === "stopTyping") stopTyping = null;
-    if (name === "stopPeerPresence") stopPeerPresence = null;
   });
+
+  stopMessages = null;
+  stopPinnedMessage = null;
+  stopPresence = null;
+  stopTyping = null;
+  stopPeerPresence = null;
+
+  stopMapListeners(profileListeners);
+  stopMapListeners(unreadListeners);
+  stopMapListeners(chatPresenceListeners);
+  stopMapListeners(chatTypingListeners);
+  stopMapListeners(chatMessageListeners);
 }
 
 // PINNED MESSAGE PATH
@@ -151,9 +178,9 @@ function getPinnedMessagePath() {
     : `privateChats/${activeRoom.id}/pinnedMessage`;
 }
 
+// MESSAGE MENU
 const messageActionMenu = document.getElementById("messageActionMenu");
 
-// MESSAGE MENU
 function closeMessageMenu() {
   if (!messageActionMenu) return;
 
@@ -183,10 +210,10 @@ function setTyping(isTyping) {
     return Promise.resolve();
   }
 
-  const typingPath =
-    `privateChats/${activeRoom.id}/typing/${currentUser.uid}`;
-
-  const typingRef = ref(db, typingPath);
+  const typingRef = ref(
+    db,
+    `privateChats/${activeRoom.id}/typing/${currentUser.uid}`
+  );
 
   typingWriteQueue = typingWriteQueue
     .catch(() => {})
@@ -197,7 +224,7 @@ function setTyping(isTyping) {
   });
 }
 
-// ONLINE / OFFLINE STATUS
+// ONLINE / OFFLINE PRESENCE
 function startPresence() {
   if (!currentUser) return;
 
@@ -268,7 +295,6 @@ async function claimUniqueUsername(baseUsername, uid) {
     .replace(/[^a-z0-9_]/g, "");
 
   if (base.length < 3) base = "user";
-
   base = base.slice(0, 12);
 
   const suffix = uid.slice(0, 6).toLowerCase();
@@ -296,7 +322,7 @@ async function claimUniqueUsername(baseUsername, uid) {
   throw new Error("Could not create a unique username.");
 }
 
-// AUTH BUTTON LOADING
+// AUTH LOADING
 function setAuthLoading(loading, message = "") {
   loginBtn.disabled = loading;
   registerBtn.disabled = loading;
@@ -306,7 +332,7 @@ function setAuthLoading(loading, message = "") {
   }
 }
 
-// AUTH: REGISTER
+// REGISTER
 registerBtn.onclick = async () => {
   const email = authEmail.value.trim();
   const password = authPassword.value;
@@ -325,7 +351,6 @@ registerBtn.onclick = async () => {
 
   try {
     await createUserWithEmailAndPassword(auth, email, password);
-
     authMessage.textContent = "Account created successfully!";
 
   } catch (error) {
@@ -347,7 +372,7 @@ registerBtn.onclick = async () => {
   }
 };
 
-// AUTH: LOGIN
+// LOGIN
 loginBtn.onclick = async () => {
   const email = authEmail.value.trim();
   const password = authPassword.value;
@@ -361,7 +386,6 @@ loginBtn.onclick = async () => {
 
   try {
     await signInWithEmailAndPassword(auth, email, password);
-
     authMessage.textContent = "Login successful!";
 
   } catch (error) {
@@ -380,6 +404,10 @@ loginBtn.onclick = async () => {
     setAuthLoading(false);
   }
 };
+
+// WAIT FOR AUTH CHECK
+authScreen.style.display = "none";
+appScreen.style.display = "none";
 
 // AUTH STATE
 onAuthStateChanged(auth, async user => {
@@ -408,9 +436,8 @@ onAuthStateChanged(auth, async user => {
 
       document.querySelector("#typingStatus").textContent = "";
 
-      messagesArea.querySelectorAll(".message").forEach(message => {
-        message.remove();
-      });
+      messagesArea.querySelectorAll(".message, .live-typing-indicator")
+        .forEach(message => message.remove());
 
       setActiveChat("");
       appScreen.classList.remove("mobile-chat-open");
@@ -418,10 +445,10 @@ onAuthStateChanged(auth, async user => {
       authMessage.textContent = "";
 
     } else {
+      stopAllListeners();
+
       authScreen.style.display = "flex";
       appScreen.style.display = "none";
-
-      stopAllListeners();
 
       closeMessageMenu();
 
@@ -434,9 +461,8 @@ onAuthStateChanged(auth, async user => {
       userSearch.value = "";
       chatList.innerHTML = "";
 
-      messagesArea.querySelectorAll(".message").forEach(message => {
-        message.remove();
-      });
+      messagesArea.querySelectorAll(".message, .live-typing-indicator")
+        .forEach(message => message.remove());
 
       profileModal.classList.remove("show");
     }
@@ -444,24 +470,21 @@ onAuthStateChanged(auth, async user => {
   } catch (error) {
     console.error("App Load Error:", error);
 
-    authScreen.style.display = "flex";
-    appScreen.style.display = "none";
+    if (user) {
+      authScreen.style.display = "none";
+      appScreen.style.display = "flex";
 
-    authMessage.textContent =
-      "Could not load app: " + error.message;
+      authMessage.textContent =
+        "Could not load app: " + error.message;
+    } else {
+      authScreen.style.display = "flex";
+      appScreen.style.display = "none";
+    }
 
   } finally {
-    authInitialized = true;
     hideSplash();
   }
 });
-
-// SPLASH FALLBACK
-setTimeout(() => {
-  if (!authInitialized) {
-    hideSplash();
-  }
-}, 5000);
 
 // LOGOUT
 logoutBtn.onclick = async () => {
@@ -552,7 +575,6 @@ function updateProfileUI(profile) {
       const img = document.createElement("img");
       img.src = profile.photo;
       avatar.appendChild(img);
-
     } else {
       avatar.textContent = name.charAt(0).toUpperCase();
     }
@@ -562,12 +584,56 @@ function updateProfileUI(profile) {
   editUsername.value = username;
 }
 
+// PROFILE SUCCESS MESSAGE
+const profileUpdateStatus = document.createElement("div");
+profileUpdateStatus.id = "profileUpdateStatus";
+profileUpdateStatus.textContent = "Profile update successful";
+
+if (editForm) {
+  editForm.insertAdjacentElement("afterend", profileUpdateStatus);
+}
+
+if (!document.getElementById("profileSuccessStyles")) {
+  const style = document.createElement("style");
+  style.id = "profileSuccessStyles";
+
+  style.textContent = `
+    #profileUpdateStatus {
+      display: none;
+      color: #22c55e;
+      background: rgba(34, 197, 94, 0.10);
+      border: 1px solid rgba(34, 197, 94, 0.25);
+      padding: 10px 14px;
+      margin-top: 12px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      text-align: center;
+    }
+  `;
+
+  document.head.appendChild(style);
+}
+
+function showProfileUpdateStatus(message) {
+  profileUpdateStatus.textContent = message;
+  profileUpdateStatus.style.display = "block";
+
+  clearTimeout(profileUpdateStatus.timer);
+
+  profileUpdateStatus.timer = setTimeout(() => {
+    profileUpdateStatus.style.display = "none";
+  }, 4000);
+}
+
 // SAVE PROFILE
 saveProfile.onclick = async () => {
   if (!currentUser) return;
 
   const name = editName.value.trim();
   const username = cleanUsername(editUsername.value);
+
+  profileUpdateStatus.style.display = "none";
 
   if (!name || !username) {
     alert("Enter your name and username.");
@@ -611,12 +677,13 @@ saveProfile.onclick = async () => {
 
     currentProfile = profile;
     updateProfileUI(profile);
+
     editForm.style.display = "none";
 
-    alert("Profile saved successfully!");
+    showProfileUpdateStatus("Profile update successful");
 
   } catch (error) {
-    console.error(error);
+    console.error("Profile Update Error:", error);
     alert("Could not save profile: " + error.message);
 
   } finally {
@@ -627,6 +694,7 @@ saveProfile.onclick = async () => {
 
 // EDIT PROFILE
 editProfileBtn.onclick = () => {
+  profileUpdateStatus.style.display = "none";
   editForm.style.display = "flex";
   editName.focus();
 };
@@ -731,6 +799,7 @@ photoInput.onchange = async () => {
 
     changePhotoBtn.disabled = true;
     changePhotoBtn.textContent = "Compressing...";
+    profileUpdateStatus.style.display = "none";
 
     const compressedPhoto = await compressProfilePhoto(file);
 
@@ -749,10 +818,10 @@ photoInput.onchange = async () => {
     currentProfile = profile;
     updateProfileUI(profile);
 
-    alert("Profile photo updated!");
+    showProfileUpdateStatus("Profile update successful");
 
   } catch (error) {
-    console.error(error);
+    console.error("Photo Update Error:", error);
     alert("Photo could not be saved: " + error.message);
 
   } finally {
@@ -777,6 +846,74 @@ profileModal.onclick = event => {
   }
 };
 
+// LIVE PROFILE LISTENER
+function watchChatProfile(item) {
+  if (!item) return;
+
+  const uid = item.dataset.peerUid;
+  if (!uid) return;
+
+  if (profileListeners.has(uid)) return;
+
+  const profileRef = ref(db, `users/${uid}/profile`);
+
+  const stop = onValue(profileRef, snapshot => {
+    if (!snapshot.exists()) return;
+
+    const profile = snapshot.val();
+
+    const name = profile.name || "User";
+    const username = profile.username || "";
+    const photo = profile.photo || "";
+
+    item.dataset.name = name;
+    item.dataset.username = username;
+    item.dataset.photo = photo;
+
+    const title = item.querySelector(".chat-info b");
+    if (title) title.textContent = name;
+
+    const avatar = item.querySelector(".avatar");
+
+    if (avatar) {
+      avatar.innerHTML = "";
+
+      if (photo) {
+        const img = document.createElement("img");
+        img.src = photo;
+        img.style.width = "100%";
+        img.style.height = "100%";
+        img.style.objectFit = "cover";
+        avatar.appendChild(img);
+      } else {
+        avatar.textContent = name.charAt(0).toUpperCase();
+      }
+    }
+
+    // Update open chat header immediately
+    if (
+      activeRoom?.type === "private" &&
+      activeRoom.id === item.dataset.roomId
+    ) {
+      chatHeaderName.textContent = name;
+      chatHeaderAvatar.innerHTML = "";
+
+      if (photo) {
+        const img = document.createElement("img");
+        img.src = photo;
+        img.style.width = "100%";
+        img.style.height = "100%";
+        img.style.objectFit = "cover";
+        chatHeaderAvatar.appendChild(img);
+      } else {
+        chatHeaderAvatar.textContent = name.charAt(0).toUpperCase();
+      }
+    }
+  });
+
+  profileListeners.set(uid, stop);
+}
+
 // CHAT LIST HELPERS
 function addChatToList(roomId, name, username, photo, type, peerUid) {
   const existing = Array.from(chatList.children)
@@ -793,6 +930,11 @@ function addChatToList(roomId, name, username, photo, type, peerUid) {
   item.dataset.name = name || "User";
   item.dataset.username = username || "";
   item.dataset.photo = photo || "";
+
+  item.dataset.isTyping = "false";
+  item.dataset.isOnline = "false";
+  item.dataset.lastMessage = "";
+  item.dataset.lastSeen = "";
 
   const avatar = document.createElement("div");
   avatar.className = "avatar blue";
@@ -817,11 +959,6 @@ function addChatToList(roomId, name, username, photo, type, peerUid) {
   const subtitle = document.createElement("p");
   subtitle.className = "last-message";
 
-  item.dataset.isTyping = "false";
-  item.dataset.isOnline = "false";
-  item.dataset.lastMessage = "";
-  item.dataset.lastSeen = "";
-
   subtitle.textContent = type === "general"
     ? "Start chatting..."
     : "@" + (username || "user");
@@ -842,7 +979,7 @@ function addChatToList(roomId, name, username, photo, type, peerUid) {
   return item;
 }
 
-// RENDER CHAT LIST PREVIEW
+// CHAT PREVIEW
 function renderChatPreview(item) {
   if (!item) return;
 
@@ -852,7 +989,6 @@ function renderChatPreview(item) {
   if (item.dataset.isTyping === "true") {
     preview.textContent = "Typing...";
     preview.classList.add("is-typing");
-
   } else {
     preview.textContent =
       item.dataset.lastMessage || (
@@ -865,7 +1001,7 @@ function renderChatPreview(item) {
   }
 }
 
-// UPDATE LAST MESSAGE PREVIEW
+// UPDATE LAST MESSAGE
 function updateLastMessage(roomId, message) {
   const chatItem = Array.from(chatList.children)
     .find(item => item.dataset.roomId === roomId);
@@ -907,13 +1043,14 @@ async function refreshLastMessage(roomId, roomPath, roomType) {
   }
 }
 
-// LOAD SAVED PRIVATE CHATS
-async function loadUserChats() {
+// LOAD SAVED PRIVATE CHATS — REALTIME
+function loadUserChats() {
   if (!currentUser) return;
 
   chatList.innerHTML = "";
 
-  addChatToList(
+  // General Chat
+  const generalItem = addChatToList(
     "general",
     "General Chat",
     "",
@@ -922,42 +1059,161 @@ async function loadUserChats() {
     ""
   );
 
-  const chatsRef = ref(db, `userChats/${currentUser.uid}`);
-  const snapshot = await get(chatsRef);
+  // General Chat live preview
+  if (stopGeneralPreview) {
+    stopGeneralPreview();
+  }
 
-  if (!snapshot.exists()) return;
+  const generalMessagesRef = ref(db, "rooms/general/messages");
 
-  const chats = snapshot.val();
-
-  Object.entries(chats).forEach(([roomId, chat]) => {
-    if (roomId === "activeRoom" || !chat || typeof chat !== "object") {
+  stopGeneralPreview = onValue(generalMessagesRef, snapshot => {
+    if (!snapshot.exists()) {
+      generalItem.dataset.lastMessage = "Start chatting...";
+      renderChatPreview(generalItem);
       return;
     }
 
+    const messages = Object.values(snapshot.val());
+
+    messages.sort((a, b) =>
+      (b.createdAt || 0) - (a.createdAt || 0)
+    );
+
+    generalItem.dataset.lastMessage =
+      messages[0]?.text || "Start chatting...";
+
+    renderChatPreview(generalItem);
+  });
+
+  const chatsRef = ref(db, `userChats/${currentUser.uid}`);
+
+  if (stopUserChats) {
+    stopUserChats();
+    stopUserChats = null;
+  }
+
+  const stops = [];
+
+  function attachPrivateChat(roomId, chat) {
+    if (
+      roomId === "activeRoom" ||
+      !chat ||
+      typeof chat !== "object" ||
+      !chat.peerUid
+    ) return;
+
     const item = addChatToList(
       roomId,
-      chat.name,
-      chat.username,
-      chat.photo,
+      chat.name || "User",
+      chat.username || "",
+      chat.photo || "",
       "private",
       chat.peerUid
     );
 
-    const unreadRef = ref(
-      db,
-      `userChats/${currentUser.uid}/${roomId}/unreadCount`
+    // Update existing chat item data
+    item.dataset.name = chat.name || "User";
+    item.dataset.username = chat.username || "";
+    item.dataset.photo = chat.photo || "";
+    item.dataset.peerUid = chat.peerUid;
+
+    const title = item.querySelector(".chat-info b");
+    if (title) title.textContent = chat.name || "User";
+
+    const avatar = item.querySelector(".avatar");
+
+    if (avatar) {
+      avatar.innerHTML = "";
+
+      if (chat.photo) {
+        const img = document.createElement("img");
+        img.src = chat.photo;
+        avatar.appendChild(img);
+      } else {
+        avatar.textContent =
+          (chat.name || "U").charAt(0).toUpperCase();
+      }
+    }
+
+    // Live profile
+    watchChatProfile(item);
+
+    // Live unread count
+    if (!unreadListeners.has(roomId)) {
+      const unreadRef = ref(
+        db,
+        `userChats/${currentUser.uid}/${roomId}/unreadCount`
+      );
+
+      const stopUnread = onValue(unreadRef, snapshot => {
+        const count = Number(snapshot.val()) || 0;
+        const badge = item.querySelector(".unread-badge");
+
+        if (!badge) return;
+
+        badge.textContent = count > 99 ? "99+" : count;
+        badge.style.display = count > 0 ? "flex" : "none";
+      });
+
+      unreadListeners.set(roomId, stopUnread);
+    }
+
+    // Attach listeners for newly added chats too
+    listenAllChatPresence();
+    listenAllChatTyping();
+  }
+
+  const stopAdded = onChildAdded(chatsRef, snapshot => {
+    attachPrivateChat(snapshot.key, snapshot.val());
+  });
+
+  const stopChanged = onChildChanged(chatsRef, snapshot => {
+    attachPrivateChat(snapshot.key, snapshot.val());
+  });
+
+  const stopRemoved = onChildRemoved(chatsRef, snapshot => {
+    const roomId = snapshot.key;
+
+    if (roomId === "activeRoom") return;
+
+    const item = Array.from(chatList.children).find(
+      child => child.dataset.roomId === roomId
     );
 
-    onValue(unreadRef, unreadSnapshot => {
-      const count = Number(unreadSnapshot.val()) || 0;
-      const badge = item.querySelector(".unread-badge");
+    if (item) item.remove();
 
-      if (!badge) return;
+    cleanupDateSeparators();
 
-      badge.textContent = count > 99 ? "99+" : count;
-      badge.style.display = count > 0 ? "flex" : "none";
-    });
+    if (unreadListeners.has(roomId)) {
+      unreadListeners.get(roomId)();
+      unreadListeners.delete(roomId);
+    }
+
+    if (chatTypingListeners.has(roomId)) {
+      chatTypingListeners.get(roomId)();
+      chatTypingListeners.delete(roomId);
+    }
+
+    if (chatMessageListeners.has(roomId)) {
+      chatMessageListeners.get(roomId)();
+      chatMessageListeners.delete(roomId);
+    }
+
+    if (activeRoom?.id === roomId) {
+      activeRoom = null;
+      messagesArea.innerHTML = "";
+      chatHeaderName.textContent = "PankieChat";
+      chatHeaderAvatar.className = "avatar blue";
+      chatHeaderAvatar.textContent = "P";
+      setActiveChat("");
+    }
   });
+
+  stops.push(stopAdded, stopChanged, stopRemoved);
+
+  stopUserChats = () => {
+    stops.forEach(stop => stop());
+  };
 }
 
 // LISTEN ALL CHAT PRESENCE
@@ -966,9 +1222,11 @@ function listenAllChatPresence() {
     const uid = item.dataset.peerUid;
     if (!uid) return;
 
+    if (chatPresenceListeners.has(uid)) return;
+
     const presenceRef = ref(db, `presence/${uid}`);
 
-    onValue(presenceRef, snapshot => {
+    const stop = onValue(presenceRef, snapshot => {
       const data = snapshot.val();
       const avatar = item.querySelector(".avatar");
 
@@ -979,6 +1237,8 @@ function listenAllChatPresence() {
         );
       }
     });
+
+    chatPresenceListeners.set(uid, stop);
   });
 }
 
@@ -992,54 +1252,279 @@ function listenAllChatTyping() {
       return;
     }
 
-    const typingRef = ref(
-      db,
-      `privateChats/${roomId}/typing/${uid}`
-    );
+    if (!chatTypingListeners.has(roomId)) {
+      const typingRef = ref(
+        db,
+        `privateChats/${roomId}/typing/${uid}`
+      );
 
-    onValue(typingRef, snapshot => {
-      item.dataset.isTyping =
-        snapshot.val() === true ? "true" : "false";
+      const stop = onValue(typingRef, snapshot => {
+        item.dataset.isTyping =
+          snapshot.val() === true ? "true" : "false";
 
-      renderChatPreview(item);
-
-      const chatTyping = item.querySelector(".chat-typing");
-
-      if (chatTyping) {
-        chatTyping.textContent =
-          item.dataset.isTyping === "true" ? "Typing..." : "";
-      }
-    });
-
-    const messagesRef = ref(
-      db,
-      `privateChats/${roomId}/messages`
-    );
-
-    onValue(messagesRef, snapshot => {
-      if (!snapshot.exists()) {
-        item.dataset.lastMessage = "No messages yet";
         renderChatPreview(item);
-        return;
-      }
 
-      const messages = Object.values(snapshot.val());
+        const chatTyping = item.querySelector(".chat-typing");
 
-      messages.sort((a, b) => {
-        return (b.createdAt || 0) - (a.createdAt || 0);
+        if (chatTyping) {
+          chatTyping.textContent =
+            item.dataset.isTyping === "true" ? "Typing..." : "";
+        }
       });
 
-      item.dataset.lastMessage =
-        messages[0]?.text || "No messages yet";
+      chatTypingListeners.set(roomId, stop);
+    }
 
-      renderChatPreview(item);
-    });
+    if (!chatMessageListeners.has(roomId)) {
+      const messagesRef = ref(
+        db,
+        `privateChats/${roomId}/messages`
+      );
+
+      const stop = onValue(messagesRef, snapshot => {
+        if (!snapshot.exists()) {
+          item.dataset.lastMessage = "No messages yet";
+          renderChatPreview(item);
+          return;
+        }
+
+        const messages = Object.values(snapshot.val());
+
+        messages.sort((a, b) => {
+          return (b.createdAt || 0) - (a.createdAt || 0);
+        });
+
+        item.dataset.lastMessage =
+          messages[0]?.text || "No messages yet";
+
+        renderChatPreview(item);
+      });
+
+      chatMessageListeners.set(roomId, stop);
+    }
+  });
+}
+
+// ACTIVE CHAT STYLE
+function setActiveChat(roomId) {
+  chatList.querySelectorAll(".chat").forEach(item => {
+    item.classList.toggle(
+      "active",
+      item.dataset.roomId === roomId
+    );
+  });
+
+  if (window.innerWidth <= 768 && roomId) {
+    appScreen.classList.add("mobile-chat-open");
+  }
+}
+
+// FORMAT LAST SEEN
+function formatLastSeen(timestamp) {
+  const date = new Date(timestamp);
+  const now = new Date();
+
+  const time = date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+
+  const isToday =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+
+  const isYesterday =
+    date.getFullYear() === yesterday.getFullYear() &&
+    date.getMonth() === yesterday.getMonth() &&
+    date.getDate() === yesterday.getDate();
+
+  if (isToday) {
+    return `Last seen today at ${time}`;
+  }
+
+  if (isYesterday) {
+    return `Last seen yesterday at ${time}`;
+  }
+
+  const dateText = date.toLocaleDateString([], {
+    month: "short",
+    day: "numeric"
+  });
+
+  return `Last seen on ${dateText} at ${time}`;
+}
+
+// LISTEN PEER PRESENCE
+function listenPeerPresence(uid) {
+  if (stopPeerPresence) {
+    stopPeerPresence();
+    stopPeerPresence = null;
+  }
+
+  if (!uid) return;
+
+  const presenceRef = ref(db, `presence/${uid}`);
+
+  stopPeerPresence = onValue(presenceRef, snapshot => {
+    const data = snapshot.val();
+    const status = document.querySelector("#chatStatus");
+
+    if (!status) return;
+
+    if (data?.state === "online") {
+      status.textContent = "Online";
+    } else if (data?.lastChanged) {
+      status.textContent = formatLastSeen(data.lastChanged);
+    } else {
+      status.textContent = "Last seen unavailable";
+    }
+
+    status.classList.toggle("online", data?.state === "online");
+
+    const chatItem = Array.from(chatList.children).find(
+      item => item.dataset.peerUid === uid
+    );
+
+    if (chatItem) {
+      chatItem.querySelector(".avatar")?.classList.toggle(
+        "is-online",
+        data?.state === "online"
+      );
+    }
+
+    chatHeaderAvatar.classList.toggle(
+      "is-online",
+      data?.state === "online"
+    );
+  });
+}
+
+// LIVE TYPING INDICATOR STYLE
+if (!document.getElementById("liveTypingStyles")) {
+  const style = document.createElement("style");
+  style.id = "liveTypingStyles";
+
+  style.textContent = `
+    .live-typing-indicator {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      width: fit-content;
+      margin: 7px 12px 10px;
+      padding: 9px 13px;
+      border-radius: 15px;
+      background: rgba(120, 140, 170, 0.13);
+      color: #8da5c7;
+      font-size: 12px;
+      animation: typingFade .2s ease;
+    }
+
+    .typing-dots {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .typing-dots i {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #65a5ff;
+      animation: typingBounce .8s infinite ease-in-out;
+    }
+
+    .typing-dots i:nth-child(2) {
+      animation-delay: .15s;
+    }
+
+    .typing-dots i:nth-child(3) {
+      animation-delay: .3s;
+    }
+
+    @keyframes typingBounce {
+      0%, 60%, 100% { transform: translateY(0); opacity: .5; }
+      30% { transform: translateY(-4px); opacity: 1; }
+    }
+
+    @keyframes typingFade {
+      from { opacity: 0; transform: translateY(5px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  `;
+
+  document.head.appendChild(style);
+}
+
+// LISTEN PEER TYPING
+function listenPeerTyping(uid) {
+  if (stopTyping) {
+    stopTyping();
+    stopTyping = null;
+  }
+
+  const oldIndicator = messagesArea.querySelector(".live-typing-indicator");
+  if (oldIndicator) oldIndicator.remove();
+
+  const typingStatus = document.querySelector("#typingStatus");
+  if (typingStatus) typingStatus.textContent = "";
+
+  if (!uid || !activeRoom || activeRoom.type !== "private") return;
+
+  const typingRef = ref(
+    db,
+    `privateChats/${activeRoom.id}/typing/${uid}`
+  );
+
+  stopTyping = onValue(typingRef, snapshot => {
+    const isTyping = snapshot.val() === true;
+
+    if (typingStatus) typingStatus.textContent = "";
+
+    const chatItem = Array.from(chatList.children).find(
+      item => item.dataset.peerUid === uid
+    );
+
+    if (chatItem) {
+      chatItem.dataset.isTyping = isTyping ? "true" : "false";
+      renderChatPreview(chatItem);
+
+      const chatTyping = chatItem.querySelector(".chat-typing");
+
+      if (chatTyping) {
+        chatTyping.textContent = isTyping ? "Typing..." : "";
+      }
+    }
+
+    let indicator = messagesArea.querySelector(".live-typing-indicator");
+
+    if (isTyping) {
+      if (!indicator) {
+        indicator = document.createElement("div");
+        indicator.className = "live-typing-indicator";
+        indicator.innerHTML = `
+          <span class="typing-dots">
+            <i></i><i></i><i></i>
+          </span>
+          <span>Typing...</span>
+        `;
+      }
+
+      messagesArea.appendChild(indicator);
+      messagesArea.scrollTop = messagesArea.scrollHeight;
+
+    } else if (indicator) {
+      indicator.remove();
+    }
   });
 }
 
 // OPEN GENERAL CHAT
 function openGeneralChat() {
-  setTyping(false);
+  setTyping(false).catch(console.error);
 
   activeRoom = {
     type: "general",
@@ -1079,113 +1564,11 @@ function openGeneralChat() {
   listenMessages();
 }
 
-// ACTIVE CHAT STYLE
-function setActiveChat(roomId) {
-  chatList.querySelectorAll(".chat").forEach(item => {
-    item.classList.toggle(
-      "active",
-      item.dataset.roomId === roomId
-    );
-  });
-
-  if (window.innerWidth <= 768 && roomId) {
-    appScreen.classList.add("mobile-chat-open");
-  }
-}
-
-// LISTEN PEER PRESENCE
-function listenPeerPresence(uid) {
-  if (stopPeerPresence) {
-    stopPeerPresence();
-    stopPeerPresence = null;
-  }
-
-  if (!uid) return;
-
-  const presenceRef = ref(db, `presence/${uid}`);
-
-  stopPeerPresence = onValue(presenceRef, snapshot => {
-    const data = snapshot.val();
-    const status = document.querySelector("#chatStatus");
-
-    if (!status) return;
-
-    if (data?.state === "online") {
-      status.textContent = "Online";
-
-    } else if (data?.lastChanged) {
-      status.textContent =
-        "Last seen at " +
-        new Date(data.lastChanged).toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit"
-        });
-
-    } else {
-      status.textContent = "Last seen unavailable";
-    }
-
-    status.classList.toggle("online", data?.state === "online");
-
-    const chatItem = Array.from(chatList.children).find(
-      item => item.dataset.peerUid === uid
-    );
-
-    if (chatItem) {
-      chatItem.querySelector(".avatar")?.classList.toggle(
-        "is-online",
-        data?.state === "online"
-      );
-    }
-
-    chatHeaderAvatar.classList.toggle(
-      "is-online",
-      data?.state === "online"
-    );
-  });
-}
-
-// LISTEN PEER TYPING
-function listenPeerTyping(uid) {
-  if (stopTyping) {
-    stopTyping();
-    stopTyping = null;
-  }
-
-  if (!uid || !activeRoom) return;
-
-  const typingRef = ref(
-    db,
-    `privateChats/${activeRoom.id}/typing/${uid}`
-  );
-
-  stopTyping = onValue(typingRef, snapshot => {
-    const isTyping = snapshot.val() === true;
-    const typingStatus = document.querySelector("#typingStatus");
-
-    if (typingStatus) {
-      typingStatus.textContent = isTyping ? "Typing..." : "";
-    }
-
-    const chatItem = Array.from(chatList.children).find(
-      item => item.dataset.peerUid === uid
-    );
-
-    if (chatItem) {
-      const chatTyping = chatItem.querySelector(".chat-typing");
-
-      if (chatTyping) {
-        chatTyping.textContent = isTyping ? "Typing..." : "";
-      }
-    }
-  });
-}
-
-// OPEN PRIVATE CHAT
+// OPEN PRIVATE CHAT - FAST VERSION
 async function openPrivateChat(peerUid, peerProfile) {
   if (!currentUser || !peerUid || !peerProfile) return;
 
-  await setTyping(false);
+  setTyping(false).catch(console.error);
 
   const members = [currentUser.uid, peerUid].sort();
   const roomId = members.join("_");
@@ -1197,93 +1580,105 @@ async function openPrivateChat(peerUid, peerProfile) {
     photo: ""
   };
 
-  try {
-    await update(
-      ref(db, `userChats/${currentUser.uid}/${roomId}`),
-      {
-        peerUid,
-        name: peerProfile.name || "User",
-        username: peerProfile.username || "",
-        photo: peerProfile.photo || ""
-      }
-    );
+  activeRoom = {
+    type: "private",
+    id: roomId,
+    path: roomPath
+  };
 
-    await update(
-      ref(db, `userChats/${peerUid}/${roomId}`),
-      {
-        peerUid: currentUser.uid,
-        name: myProfileData.name || "User",
-        username: myProfileData.username || "",
-        photo: myProfileData.photo || ""
-      }
-    );
+  const chatItem = addChatToList(
+    roomId,
+    peerProfile.name,
+    peerProfile.username,
+    peerProfile.photo,
+    "private",
+    peerUid
+  );
 
-    addChatToList(
-      roomId,
-      peerProfile.name,
-      peerProfile.username,
-      peerProfile.photo,
-      "private",
-      peerUid
-    );
+  watchChatProfile(chatItem);
 
-    activeRoom = {
-      type: "private",
-      id: roomId,
-      path: roomPath
-    };
+  chatHeaderName.textContent = peerProfile.name || "User";
+  chatHeaderAvatar.className = "avatar blue";
+  chatHeaderAvatar.innerHTML = "";
 
-    const myTypingRef = ref(
-      db,
-      `privateChats/${roomId}/typing/${currentUser.uid}`
-    );
-
-    await onDisconnect(myTypingRef).remove();
-
-    const activeChatRef = ref(
-      db,
-      `userChats/${currentUser.uid}/activeRoom`
-    );
-
-    await onDisconnect(activeChatRef).remove();
-    await set(activeChatRef, roomId);
-
-    chatHeaderName.textContent = peerProfile.name || "User";
-    chatHeaderAvatar.className = "avatar blue";
-    chatHeaderAvatar.innerHTML = "";
-
-    if (peerProfile.photo) {
-      const img = document.createElement("img");
-      img.src = peerProfile.photo;
-      img.style.width = "100%";
-      img.style.height = "100%";
-      img.style.objectFit = "cover";
-      chatHeaderAvatar.appendChild(img);
-
-    } else {
-      chatHeaderAvatar.textContent =
-        (peerProfile.name || "U").charAt(0).toUpperCase();
-    }
-
-    setActiveChat(roomId);
-    listenMessages();
-
-    await set(
-      ref(db, `userChats/${currentUser.uid}/${roomId}/unreadCount`),
-      0
-    );
-
-    listenPeerPresence(peerUid);
-    listenPeerTyping(peerUid);
-
-    searchResults.innerHTML = "";
-    userSearch.value = "";
-    messageInput.focus();
-
-  } catch (error) {
-    console.error("Open Private Chat Error:", error);
-    alert("Could not open chat: " + error.message);
+  if (peerProfile.photo) {
+    const img = document.createElement("img");
+    img.src = peerProfile.photo;
+    img.style.width = "100%";
+    img.style.height = "100%";
+    img.style.objectFit = "cover";
+    chatHeaderAvatar.appendChild(img);
+  } else {
+    chatHeaderAvatar.textContent =
+      (peerProfile.name || "U").charAt(0).toUpperCase();
   }
+
+  document.querySelector("#chatStatus").textContent = "";
+  document.querySelector("#typingStatus").textContent = "";
+
+  setActiveChat(roomId);
+
+  searchResults.innerHTML = "";
+  userSearch.value = "";
+
+  listenMessages();
+  listenPeerPresence(peerUid);
+  listenPeerTyping(peerUid);
+
+  messageInput.focus();
+
+  set(
+    ref(db, `userChats/${currentUser.uid}/${roomId}/unreadCount`),
+    0
+  ).catch(console.error);
+
+  const saveChatInfo = async () => {
+    try {
+      await Promise.all([
+        update(
+          ref(db, `userChats/${currentUser.uid}/${roomId}`),
+          {
+            peerUid,
+            name: peerProfile.name || "User",
+            username: peerProfile.username || "",
+            photo: peerProfile.photo || ""
+          }
+        ),
+
+        update(
+          ref(db, `userChats/${peerUid}/${roomId}`),
+          {
+            peerUid: currentUser.uid,
+            name: myProfileData.name || "User",
+            username: myProfileData.username || "",
+            photo: myProfileData.photo || ""
+          }
+        )
+      ]);
+
+      const myTypingRef = ref(
+        db,
+        `privateChats/${roomId}/typing/${currentUser.uid}`
+      );
+
+      const activeChatRef = ref(
+        db,
+        `userChats/${currentUser.uid}/activeRoom`
+      );
+
+      await Promise.all([
+        onDisconnect(myTypingRef).remove(),
+        onDisconnect(activeChatRef).remove()
+      ]);
+
+      await set(activeChatRef, roomId);
+
+    } catch (error) {
+      console.error("Save Chat Info Error:", error);
+    }
+  };
+
+  saveChatInfo();
 }
 
 // CHAT LIST CLICK
@@ -1358,7 +1753,6 @@ userSearch.addEventListener("input", async () => {
       img.style.height = "100%";
       img.style.objectFit = "cover";
       avatar.appendChild(img);
-
     } else {
       avatar.textContent =
         (profile.name || "U").charAt(0).toUpperCase();
@@ -1366,7 +1760,7 @@ userSearch.addEventListener("input", async () => {
 
     const searchPresenceRef = ref(db, `presence/${uid}`);
 
-    onValue(searchPresenceRef, snapshot => {
+    const stopSearchPresence = onValue(searchPresenceRef, snapshot => {
       const data = snapshot.val();
 
       avatar.classList.toggle(
@@ -1387,6 +1781,8 @@ userSearch.addEventListener("input", async () => {
     result.append(avatar, info);
 
     result.onclick = () => {
+      stopSearchPresence();
+
       openPrivateChat(uid, profile);
 
       searchOverlay.classList.remove("active");
@@ -1454,6 +1850,52 @@ function positionMessageMenu(messageElement) {
   messageActionMenu.style.top = `${top}px`;
 }
 
+
+function getMessageDateLabel(timestamp) {
+  const date = new Date(timestamp || Date.now());
+  const today = new Date();
+  const yesterday = new Date();
+
+  today.setHours(0, 0, 0, 0);
+  yesterday.setDate(yesterday.getDate() - 1);
+  yesterday.setHours(0, 0, 0, 0);
+
+  const messageDate = new Date(date);
+  messageDate.setHours(0, 0, 0, 0);
+
+  if (messageDate.getTime() === today.getTime()) {
+    return "TODAY";
+  }
+
+  if (messageDate.getTime() === yesterday.getTime()) {
+    return "YESTERDAY";
+  }
+
+  return date.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric"
+  });
+}
+
+function cleanupDateSeparators() {
+  messagesArea.querySelectorAll(".date-separator").forEach(separator => {
+    const date = separator.dataset.date;
+
+    const hasMessage = Array.from(
+      messagesArea.querySelectorAll(".message")
+    ).some(message => {
+      return getMessageDateLabel(
+        Number(message.dataset.createdAt)
+      ) === date;
+    });
+
+    if (!hasMessage) {
+      separator.remove();
+    }
+  });
+}
+
 // MESSAGE LISTENER
 function listenMessages() {
   if (!activeRoom) return;
@@ -1465,10 +1907,9 @@ function listenMessages() {
 
   closeMessageMenu();
 
-  messagesArea.querySelectorAll(".message").forEach(message => {
-    message.remove();
-  });
-
+  messagesArea.querySelectorAll(
+  ".message, .date-separator, .live-typing-indicator"
+).forEach(element => element.remove());
   const roomPath = activeRoom.path;
   const roomId = activeRoom.id;
   const roomType = activeRoom.type;
@@ -1542,7 +1983,33 @@ function listenMessages() {
       positionMessageMenu(item);
     });
 
+    
+    const dateLabel = getMessageDateLabel(data.createdAt);
+
+    const existingSeparator = Array.from(
+      messagesArea.querySelectorAll(".date-separator")
+    ).find(separator => separator.dataset.date === dateLabel);
+
+    if (!existingSeparator) {
+      const separator = document.createElement("div");
+      separator.className = "date-separator";
+      separator.dataset.date = dateLabel;
+      separator.textContent = dateLabel;
+
+      messagesArea.appendChild(separator);
+    }
+
     messagesArea.appendChild(item);
+
+    // Keep typing indicator at the very bottom
+    const typingIndicator = messagesArea.querySelector(
+      ".live-typing-indicator"
+    );
+
+    if (typingIndicator) {
+      messagesArea.appendChild(typingIndicator);
+    }
+
     updateLastMessage(roomId, data.text);
 
     if (!isSent && roomType === "private") {
@@ -1590,14 +2057,16 @@ function listenMessages() {
 
     if (item) item.remove();
 
-    if (
-      selectedMessage?.id === snapshot.key &&
-      selectedMessage?.roomPath === roomPath
-    ) {
-      closeMessageMenu();
-    }
+// Remove empty date separators
+messagesArea.querySelectorAll(".date-separator").forEach(separator => {
+  const next = separator.nextElementSibling;
 
-    refreshLastMessage(roomId, roomPath, roomType);
+  if (!next || !next.classList.contains("message")) {
+    separator.remove();
+  }
+});
+
+refreshLastMessage(roomId, roomPath, roomType);
   });
 
   stopMessages = () => {
@@ -1661,63 +2130,74 @@ async function sendMessage() {
   const text = messageInput.value.trim();
   if (!text) return;
 
+  const room = { ...activeRoom };
+  const sender = currentUser;
+  const peerProfileData = currentProfile;
+
+  const replyData = replyingTo
+    ? {
+        messageId: replyingTo.id,
+        text: replyingTo.text,
+        senderName: replyingTo.senderName
+      }
+    : null;
+
+  // Clear input immediately
+  messageInput.value = "";
+  replyingTo = null;
+
+  document.getElementById("replyPreview").style.display = "none";
+
+  setTyping(false).catch(console.error);
+
   try {
-    const messagesRef = ref(db, activeRoom.path);
+    const messagesRef = ref(db, room.path);
     const newMessageRef = push(messagesRef);
 
     const messageData = {
       text,
-      uid: currentUser.uid,
-      senderName: currentProfile?.name || "User",
+      uid: sender.uid,
+      senderName: peerProfileData?.name || "User",
       createdAt: Date.now(),
       status: "sent"
     };
 
-    if (replyingTo) {
-      messageData.replyTo = {
-        messageId: replyingTo.id,
-        text: replyingTo.text,
-        senderName: replyingTo.senderName
-      };
+    if (replyData) {
+      messageData.replyTo = replyData;
     }
 
     await set(newMessageRef, messageData);
 
-    if (activeRoom.type === "private") {
+    updateLastMessage(room.id, text);
+
+    if (room.type === "private") {
       const chatItem = Array.from(chatList.children)
-        .find(item => item.dataset.roomId === activeRoom.id);
+        .find(item => item.dataset.roomId === room.id);
 
       const peerUid = chatItem?.dataset.peerUid;
 
       if (peerUid) {
-        const unreadRef = ref(
-          db,
-          `userChats/${peerUid}/${activeRoom.id}/unreadCount`
-        );
-
         const peerActiveRoomRef = ref(
           db,
           `userChats/${peerUid}/activeRoom`
         );
 
-        const peerActiveRoomSnapshot = await get(peerActiveRoomRef);
+        const unreadRef = ref(
+          db,
+          `userChats/${peerUid}/${room.id}/unreadCount`
+        );
 
-        if (peerActiveRoomSnapshot.val() !== activeRoom.id) {
-          await runTransaction(unreadRef, count => {
-            return (Number(count) || 0) + 1;
-          });
-        }
+        get(peerActiveRoomRef)
+          .then(snapshot => {
+            if (snapshot.val() !== room.id) {
+              return runTransaction(unreadRef, count => {
+                return (Number(count) || 0) + 1;
+              });
+            }
+          })
+          .catch(console.error);
       }
     }
-
-    updateLastMessage(activeRoom.id, text);
-
-    await setTyping(false);
-
-    messageInput.value = "";
-    replyingTo = null;
-
-    document.getElementById("replyPreview").style.display = "none";
 
   } catch (error) {
     console.error("Send Error:", error);
@@ -2493,7 +2973,7 @@ if (!document.getElementById("deleteConfirmStyles")) {
   document.head.appendChild(style);
 }
 
-// CREATE DELETE ACCOUNT BUTTON AUTOMATICALLY
+// DELETE ACCOUNT BUTTON
 const deleteAccountBtn = document.createElement("button");
 
 deleteAccountBtn.id = "deleteAccountBtn";
@@ -2536,24 +3016,74 @@ if (!document.getElementById("deleteAccountStyles")) {
   document.head.appendChild(style);
 }
 
-// DELETE ACCOUNT
-deleteAccountBtn.onclick = async () => {
+
+
+// DELETE ACCOUNT — LIQUID GLASS MODAL
+
+const deletePasswordModal = document.getElementById("deletePasswordModal");
+const deleteAccountPassword = document.getElementById("deleteAccountPassword");
+const cancelDeletePassword = document.getElementById("cancelDeletePassword");
+const confirmDeletePassword = document.getElementById("confirmDeletePassword");
+
+// Error message
+let deletePasswordError = document.getElementById("deletePasswordError");
+
+if (!deletePasswordError && deletePasswordModal) {
+  deletePasswordError = document.createElement("p");
+  deletePasswordError.id = "deletePasswordError";
+  deletePasswordError.style.cssText =
+    "color:#ff7b89;font-size:12px;margin:0 0 12px;display:none;";
+  deleteAccountPassword.insertAdjacentElement("afterend", deletePasswordError);
+}
+
+function closeDeletePasswordModal() {
+  deletePasswordModal?.classList.remove("show");
+
+  if (deleteAccountPassword) {
+    deleteAccountPassword.value = "";
+  }
+
+  if (deletePasswordError) {
+    deletePasswordError.textContent = "";
+    deletePasswordError.style.display = "none";
+  }
+
+  confirmDeletePassword.disabled = false;
+  confirmDeletePassword.textContent = "Delete Account";
+}
+
+deleteAccountBtn.onclick = () => {
+  if (!currentUser || !deletePasswordModal) return;
+
+  deleteAccountPassword.value = "";
+  deletePasswordError.style.display = "none";
+
+  deletePasswordModal.classList.add("show");
+  deleteAccountPassword.focus();
+};
+
+cancelDeletePassword.onclick = closeDeletePasswordModal;
+
+deletePasswordModal.addEventListener("click", event => {
+  if (event.target === deletePasswordModal) {
+    closeDeletePasswordModal();
+  }
+});
+
+// CONFIRM ACCOUNT DELETION
+confirmDeletePassword.onclick = async () => {
   if (!currentUser) return;
 
-  const confirmed = confirm(
-    "Delete your account permanently? This action cannot be undone."
-  );
+  const password = deleteAccountPassword.value;
 
-  if (!confirmed) return;
+  if (!password.trim()) {
+    deletePasswordError.textContent = "Please enter your password.";
+    deletePasswordError.style.display = "block";
+    return;
+  }
 
-  const password = prompt(
-    "Enter your account password to confirm deletion:"
-  );
-
-  if (!password) return;
-
-  deleteAccountBtn.disabled = true;
-  deleteAccountBtn.textContent = "Deleting...";
+  confirmDeletePassword.disabled = true;
+  confirmDeletePassword.textContent = "Deleting...";
 
   try {
     const user = currentUser;
@@ -2563,7 +3093,7 @@ deleteAccountBtn.onclick = async () => {
       throw new Error("This account has no email address.");
     }
 
-    // REAUTHENTICATE
+    // Re-authenticate
     const credential = EmailAuthProvider.credential(
       user.email,
       password
@@ -2571,53 +3101,90 @@ deleteAccountBtn.onclick = async () => {
 
     await reauthenticateWithCredential(user, credential);
 
-    // GET CURRENT USERNAME
+    // Get own profile
     const profileSnapshot = await get(
       ref(db, `users/${uid}/profile`)
     );
 
     const username = cleanUsername(
-      profileSnapshot.val()?.username || currentProfile?.username || ""
+      profileSnapshot.val()?.username ||
+      currentProfile?.username ||
+      ""
     );
 
-    // RELEASE USERNAME ONLY IF OWNED BY THIS USER
+    // Get private chats
+    const chatsSnapshot = await get(
+      ref(db, `userChats/${uid}`)
+    );
+
+    const chats = chatsSnapshot.val() || {};
+    const deleteUpdates = {};
+
+    for (const [roomId, chat] of Object.entries(chats)) {
+      if (
+        roomId === "activeRoom" ||
+        !chat ||
+        typeof chat !== "object"
+      ) continue;
+
+      const peerUid = chat.peerUid;
+
+      if (!peerUid || peerUid === uid) continue;
+
+      deleteUpdates[`userChats/${peerUid}/${roomId}`] = null;
+      deleteUpdates[`privateChats/${roomId}`] = null;
+    }
+
+    // Delete own database data
+    deleteUpdates[`users/${uid}`] = null;
+    deleteUpdates[`userChats/${uid}`] = null;
+    deleteUpdates[`presence/${uid}`] = null;
+
     if (username) {
       await releaseUsername(username, uid);
     }
 
-    // REMOVE ONLY THIS USER'S PERSONAL DATA
-    // Shared private chat rooms are intentionally preserved.
-    await update(ref(db), {
-      [`users/${uid}`]: null,
-      [`userChats/${uid}`]: null,
-      [`presence/${uid}`]: null
-    });
+    await update(ref(db), deleteUpdates);
 
-    // DELETE FIREBASE AUTH ACCOUNT
+    // Delete authentication account
     await deleteUser(user);
 
+    closeDeletePasswordModal();
     profileModal.classList.remove("show");
 
-    alert("Your account has been deleted successfully.");
+    alert("Your account has been deleted successfully!");
 
   } catch (error) {
     console.error("Account Delete Error:", error);
 
-    if (error.code === "auth/wrong-password" ||
-        error.code === "auth/invalid-credential") {
-      alert("Incorrect password. Account was not deleted.");
+    let message = "Account deletion failed: " + error.message;
+
+    if (
+      error.code === "auth/wrong-password" ||
+      error.code === "auth/invalid-credential"
+    ) {
+      message = "Incorrect password. Please try again.";
 
     } else if (error.code === "auth/requires-recent-login") {
-      alert("Please log in again, then try deleting your account.");
-
-    } else {
-      alert("Account deletion failed: " + error.message);
+      message = "Please log in again, then try deleting your account.";
     }
 
+    deletePasswordError.textContent = message;
+    deletePasswordError.style.display = "block";
+
   } finally {
-    deleteAccountBtn.disabled = false;
-    deleteAccountBtn.textContent = "Delete Account";
+    confirmDeletePassword.disabled = false;
+    confirmDeletePassword.textContent = "Delete Account";
   }
 };
+document.querySelectorAll(".toggle-password").forEach(button => {
+  button.addEventListener("click", () => {
+    const input = document.getElementById(button.dataset.target);
+    if (!input) return;
 
-console.log("PankieChat App Loaded");
+    input.type = input.type === "password" ? "text" : "password";
+    button.innerHTML = input.type === "password"
+      ? '<i class="eye-icon">Show Password👁</i>'
+      : '<i class="eye-icon">◉</i>';
+  });
+});

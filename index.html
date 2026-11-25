@@ -36,12 +36,15 @@
         autocomplete="email"
       >
 
-      <input
+      <div class="password-field">
+        <input
         type="password"
         id="authPassword"
         placeholder="Password"
         autocomplete="current-password"
       >
+      <button type="button" class="toggle-password" data-target="authPassword">👁</button>
+    </div>
 
       <button id="loginBtn">Login</button>
       <button id="registerBtn">Create Account</button>
@@ -288,6 +291,32 @@
   <button id="pinAction">📌 Pin</button>
   <button id="reactAction">😊 React</button>
   <button id="deleteAction">🗑 Delete</button>
+</div>
+
+
+<!-- Delete Account Password Modal -->
+<div id="deletePasswordModal" class="modal">
+  <div class="modal-content delete-password-card">
+    <h3>🔐 Confirm Account Deletion</h3>
+    <p>Enter your password to permanently delete your account and private chats.</p>
+
+    <div class="password-field">
+      <input
+        type="password"
+        id="deleteAccountPassword"
+        placeholder="Enter your password"
+        autocomplete="current-password"
+      >
+      <button type="button" class="toggle-password" data-target="deleteAccountPassword">👁</button>
+    </div>
+
+    <div class="modal-actions">
+      <button id="cancelDeletePassword">Cancel</button>
+      <button id="confirmDeletePassword" class="danger-btn">
+        Delete Account
+      </button>
+    </div>
+  </div>
 </div>
 
 </body>
