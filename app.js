@@ -1,4 +1,3 @@
-
 import { initializeApp } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js";
 
 import {
@@ -57,7 +56,7 @@ const authMessage = document.querySelector("#authMessage");
 const appScreen = document.querySelector("#app");
 const logoutBtn = document.querySelector("#logoutBtn");
 
-const messageInput = document.querySelector(".message-input input");
+const messageInput = document.getElementById("messageInput");
 const sendButton = document.querySelector(".message-input .send");
 const messagesArea = document.querySelector(".messages");
 
@@ -1662,9 +1661,6 @@ async function openPrivateChat(peerUid, peerProfile) {
   listenMessages();
   listenPeerPresence(peerUid);
   listenPeerTyping(peerUid);
-
-  messageInput.focus();
-
   set(
     ref(db, `userChats/${currentUser.uid}/${roomId}/unreadCount`),
     0
@@ -2350,6 +2346,26 @@ async function sendMessage() {
 }
 
 sendButton.onclick = sendMessage;
+// TYPING INPUT LISTENER
+let typingTimer = null;
+
+messageInput.addEventListener("input", () => {
+  if (!activeRoom || activeRoom.type !== "private" || !currentUser) {
+    return;
+  }
+
+  clearTimeout(typingTimer);
+
+  if (messageInput.value.trim().length > 0) {
+    setTyping(true);
+
+    typingTimer = setTimeout(() => {
+      setTyping(false);
+    }, 2000);
+  } else {
+    setTyping(false);
+  }
+});
 
 // ATTACHMENT POPUP
 const attachButton = document.getElementById("attachButton");
@@ -2374,6 +2390,22 @@ document.addEventListener("click", (event) => {
 // PHOTO & VIDEO PICKER
 const photoOption = document.getElementById("photoOption");
 const mediaInput = document.getElementById("mediaInput");
+const attachButton = document.getElementById("attachButton");
+
+// PHOTO PREVIEW ELEMENTS
+const photoPreviewModal = document.getElementById("photoPreviewModal");
+const photoPreviewImage = document.getElementById("photoPreviewImage");
+const photoPreviewName = document.getElementById("photoPreviewName");
+const closePhotoPreview = document.getElementById("closePhotoPreview");
+const sendPhotoButton = document.getElementById("sendPhotoButton");
+
+const photoUploadProgress = document.getElementById("photoUploadProgress");
+const photoProgressCircle = document.getElementById("photoProgressCircle");
+const photoProgressText = document.getElementById("photoProgressText");
+
+let selectedMediaFile = null;
+let photoPreviewURL = null;
+
 
 photoOption.onclick = () => {
   attachmentPopup.classList.remove("active");
@@ -2382,7 +2414,8 @@ photoOption.onclick = () => {
 
 
 
-mediaInput.onchange = async () => {
+
+mediaInput.onchange = () => {
   const file = mediaInput.files[0];
   if (!file) return;
 
@@ -2397,6 +2430,180 @@ mediaInput.onchange = async () => {
     mediaInput.value = "";
     return;
   }
+
+  const allowedTypes = [
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif"
+  ];
+
+  if (!allowedTypes.includes(file.type)) {
+    alert("Please select a JPG, PNG, WEBP or GIF image.");
+    mediaInput.value = "";
+    return;
+  }
+
+  selectedMediaFile = file;
+
+  if (photoPreviewURL) {
+    URL.revokeObjectURL(photoPreviewURL);
+  }
+
+  photoPreviewURL = URL.createObjectURL(file);
+
+  photoPreviewImage.src = photoPreviewURL;
+  photoPreviewName.textContent = file.name;
+
+  photoUploadProgress.classList.remove("active");
+  photoPreviewModal.classList.add("active");
+
+  attachmentPopup.classList.remove("active");
+};
+
+
+function updatePhotoProgress(percent) {
+  const circumference = 264;
+  const offset = circumference - (percent / 100) * circumference;
+
+  photoProgressCircle.style.strokeDashoffset = offset;
+  photoProgressText.textContent = `${percent}%`;
+}
+
+function closePhotoPreviewWindow() {
+  if (photoUploading) return;
+
+  photoPreviewModal.classList.remove("active");
+  photoUploadProgress.classList.remove("active");
+
+  photoPreviewImage.src = "";
+  selectedMediaFile = null;
+  mediaInput.value = "";
+
+  if (photoPreviewURL) {
+    URL.revokeObjectURL(photoPreviewURL);
+    photoPreviewURL = null;
+  }
+
+  updatePhotoProgress(0);
+}
+
+let photoUploading = false;
+
+closePhotoPreview.addEventListener("click", closePhotoPreviewWindow);
+
+sendPhotoButton.addEventListener("click", async () => {
+  const file = selectedMediaFile;
+
+  if (!file || photoUploading || !activeRoom || !currentUser) return;
+
+  const room = {
+    type: activeRoom.type,
+    id: activeRoom.id
+  };
+
+  photoUploading = true;
+  sendPhotoButton.disabled = true;
+  closePhotoPreview.disabled = true;
+
+  photoUploadProgress.classList.add("active");
+  updatePhotoProgress(0);
+
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+
+      reader.onload = () => resolve(reader.result.split(",")[1]);
+      reader.onerror = () => reject(new Error("Could not read image"));
+
+      reader.readAsDataURL(file);
+    });
+
+    const token = await currentUser.getIdToken();
+
+    const xhr = new XMLHttpRequest();
+
+    const uploadResult = await new Promise((resolve, reject) => {
+      xhr.open("POST", "/.netlify/functions/b2-upload");
+
+      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+
+      xhr.upload.onprogress = event => {
+        if (event.lengthComputable) {
+          const percent = Math.min(
+            90,
+            Math.round((event.loaded / event.total) * 90)
+          );
+
+          updatePhotoProgress(percent);
+        }
+      };
+
+      xhr.onload = () => {
+        let result;
+
+        try {
+          result = JSON.parse(xhr.responseText);
+        } catch {
+          reject(new Error("Invalid server response"));
+          return;
+        }
+
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(new Error(result.error || "Upload failed"));
+          return;
+        }
+
+        resolve(result);
+      };
+
+      xhr.onerror = () => reject(new Error("Network error"));
+      xhr.onabort = () => reject(new Error("Upload cancelled"));
+
+      xhr.send(JSON.stringify({
+        fileName: file.name,
+        contentType: file.type,
+        fileData: base64,
+        roomType: room.type,
+        roomId: room.id
+      }));
+    });
+
+    updatePhotoProgress(100);
+
+    updateLastMessage(room.id, file.name);
+
+    console.log("Media message sent:", uploadResult.messageId);
+
+    photoPreviewModal.classList.remove("active");
+    photoUploadProgress.classList.remove("active");
+
+    photoPreviewImage.src = "";
+    selectedMediaFile = null;
+    mediaInput.value = "";
+
+    if (photoPreviewURL) {
+      URL.revokeObjectURL(photoPreviewURL);
+      photoPreviewURL = null;
+    }
+
+  } catch (error) {
+    console.error("Media Upload Error:", error);
+    alert("Upload failed: " + error.message);
+  } finally {
+    photoUploading = false;
+    sendPhotoButton.disabled = false;
+    closePhotoPreview.disabled = false;
+    attachButton.disabled = false;
+    attachButton.textContent = "＋";
+
+    if (selectedMediaFile) {
+      photoUploadProgress.classList.remove("active");
+      updatePhotoProgress(0);
+    }
+  }
+});
 
   try {
     attachButton.disabled = true;

@@ -361,5 +361,37 @@
   </div>
 </div>
 
+
+<!-- PHOTO PREVIEW MODAL -->
+<div id="photoPreviewModal" class="photo-preview-modal">
+  <div class="photo-preview-box">
+    <div class="photo-preview-header">
+      <span>Preview Photo</span>
+      <button type="button" id="closePhotoPreview">✕</button>
+    </div>
+
+    <div class="photo-preview-content">
+      <img id="photoPreviewImage" alt="Selected photo preview">
+    </div>
+
+    <div class="photo-preview-footer">
+      <span id="photoPreviewName"></span>
+      <button type="button" id="sendPhotoButton">Send ➤</button>
+    </div>
+
+    <div id="photoUploadProgress" class="photo-upload-progress">
+      <div class="photo-progress-circle">
+        <svg viewBox="0 0 100 100">
+          <circle class="progress-bg" cx="50" cy="50" r="42"/>
+          <circle id="photoProgressCircle" class="progress-value"
+            cx="50" cy="50" r="42"/>
+        </svg>
+        <span id="photoProgressText">0%</span>
+      </div>
+      <p>Uploading photo...</p>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>

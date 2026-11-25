@@ -1702,3 +1702,168 @@ input::placeholder {
   color: rgba(255,255,255,0.65);
   font-size: 13px;
 }
+
+/* PHOTO PREVIEW MODAL */
+.photo-preview-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100001;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.photo-preview-modal.active {
+  display: flex;
+}
+
+.photo-preview-box {
+  position: relative;
+  width: 100%;
+  max-width: 430px;
+  padding: 16px;
+  border-radius: 24px;
+  color: white;
+  background: rgba(25, 34, 54, 0.94);
+  border: 1px solid rgba(255,255,255,.14);
+  box-shadow: 0 20px 70px rgba(0,0,0,.5);
+}
+
+.photo-preview-header,
+.photo-preview-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.photo-preview-header {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+
+.photo-preview-header button {
+  border: 0;
+  background: rgba(255,255,255,.12);
+  color: white;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.photo-preview-content {
+  width: 100%;
+  height: min(55vh, 430px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 16px;
+  background: rgba(0,0,0,.25);
+}
+
+.photo-preview-content img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.photo-preview-footer {
+  margin-top: 15px;
+}
+
+#photoPreviewName {
+  font-size: 12px;
+  color: #aab8d0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#sendPhotoButton {
+  border: 0;
+  border-radius: 12px;
+  padding: 11px 19px;
+  background: #3985ff;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#sendPhotoButton:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+/* CIRCULAR UPLOAD PROGRESS */
+.photo-upload-progress {
+  display: none;
+  position: absolute;
+  inset: 0;
+  border-radius: 24px;
+  background: rgba(12, 19, 33, .92);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.photo-upload-progress.active {
+  display: flex;
+}
+
+.photo-progress-circle {
+  position: relative;
+  width: 100px;
+  height: 100px;
+}
+
+.photo-progress-circle svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.photo-progress-circle circle {
+  fill: none;
+  stroke-width: 8;
+}
+
+.progress-bg {
+  stroke: rgba(255,255,255,.14);
+}
+
+.progress-value {
+  stroke: #3985ff;
+  stroke-linecap: round;
+  stroke-dasharray: 264;
+  stroke-dashoffset: 264;
+  transition: stroke-dashoffset .15s linear;
+}
+
+#photoProgressText {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 21px;
+  font-weight: 700;
+}
+
+.photo-upload-progress p {
+  font-size: 13px;
+  color: #c5d2e8;
+}
+
+@media (max-width: 480px) {
+  .photo-preview-box {
+    max-width: 100%;
+  }
+}
