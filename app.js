@@ -224,6 +224,26 @@ function setTyping(isTyping) {
   });
 }
 
+// MESSAGE TYPING EVENT
+let typingTimer = null;
+
+messageInput.addEventListener("input", () => {
+  if (!activeRoom || activeRoom.type !== "private") return;
+
+  if (messageInput.value.trim()) {
+    setTyping(true);
+
+    clearTimeout(typingTimer);
+
+    typingTimer = setTimeout(() => {
+      setTyping(false);
+    }, 2000);
+  } else {
+    clearTimeout(typingTimer);
+    setTyping(false);
+  }
+});
+
 // ONLINE / OFFLINE PRESENCE
 function startPresence() {
   if (!currentUser) return;
@@ -1047,7 +1067,23 @@ async function refreshLastMessage(roomId, roomPath, roomType) {
 function loadUserChats() {
   if (!currentUser) return;
 
-  chatList.innerHTML = "";
+// CLEANUP OLD CHAT LISTENERS
+[
+  chatPresenceListeners,
+  chatTypingListeners,
+  chatMessageListeners,
+  unreadListeners
+].forEach(listenerMap => {
+  listenerMap.forEach(stop => stop());
+  listenerMap.clear();
+});
+
+if (stopGeneralPreview) {
+  stopGeneralPreview();
+  stopGeneralPreview = null;
+}
+
+chatList.innerHTML = "";
 
   // General Chat
   const generalItem = addChatToList(
@@ -2250,6 +2286,7 @@ async function sendMessage() {
 
   // Clear input immediately
   messageInput.value = "";
+  clearTimeout(typingTimer);
   replyingTo = null;
 
   document.getElementById("replyPreview").style.display = "none";
