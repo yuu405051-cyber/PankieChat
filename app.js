@@ -228,11 +228,12 @@ function setTyping(isTyping) {
 let typingTimer = null;
 
 messageInput.addEventListener("input", () => {
+  console.log("TYPING INPUT:", activeRoom?.type);
+
   if (!activeRoom || activeRoom.type !== "private") return;
 
   if (messageInput.value.trim()) {
     setTyping(true);
-
     clearTimeout(typingTimer);
 
     typingTimer = setTimeout(() => {
