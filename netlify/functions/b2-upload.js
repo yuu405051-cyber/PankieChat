@@ -14,6 +14,7 @@ const {
 
 const crypto = require("crypto");
 
+// FIREBASE ADMIN
 if (!getApps().length) {
   const serviceAccount = JSON.parse(
     process.env.FIREBASE_SERVICE_ACCOUNT
@@ -25,11 +26,7 @@ if (!getApps().length) {
   });
 }
 
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
-  });
-}
-
+// BACKBLAZE B2
 const s3 = new S3Client({
   endpoint: process.env.B2_ENDPOINT,
   region: process.env.B2_REGION,
@@ -39,6 +36,7 @@ const s3 = new S3Client({
   }
 });
 
+// UPLOAD SETTINGS
 const MAX_SIZE = 4 * 1024 * 1024;
 
 const ALLOWED_TYPES = [
@@ -53,6 +51,7 @@ const ALLOWED_TYPES = [
   "application/pdf"
 ];
 
+// UPLOAD FUNCTION
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") {
     return {
@@ -76,8 +75,11 @@ exports.handler = async (event) => {
     const token = authHeader.slice(7);
     const decoded = await getAuth().verifyIdToken(token);
 
-    const { fileName, contentType, fileData } =
-      JSON.parse(event.body || "{}");
+    const {
+      fileName,
+      contentType,
+      fileData
+    } = JSON.parse(event.body || "{}");
 
     if (
       !fileName ||
