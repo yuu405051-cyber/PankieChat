@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#090f20"><meta name="description" content="PankieChat — connect privately and instantly.">
+  <link rel="manifest" href="manifest.webmanifest"><link rel="stylesheet" href="style.css">
+  <title>PankieChat</title>
+</head>
+<body>
+  <div id="splashScreen" class="splash"><div class="logo-orbit"><div class="logo-mark">P</div></div><h1>PankieChat</h1><p>Connect with your world</p><div class="loading-line"><i></i></div></div>
+  <section id="authScreen" class="auth-screen hidden">
+    <div class="auth-card glass"><div class="brand"><div class="brand-mark">P</div><div><b>PankieChat</b><small>Private conversations, beautifully connected</small></div></div>
+      <h1 id="authTitle">Welcome back</h1><p id="authSubtitle">Sign in to continue to PankieChat.</p>
+      <form id="authForm"><div id="nameField" class="field hidden"><label>Display name</label><input id="displayName" maxlength="32" placeholder="Your name"></div><div id="usernameField" class="field hidden"><label>Username</label><input id="username" maxlength="20" placeholder="your_username" autocomplete="username"></div><div class="field"><label>Email</label><input id="email" type="email" required autocomplete="email" placeholder="you@example.com"></div><div class="field"><label>Password</label><input id="password" type="password" required minlength="6" autocomplete="current-password" placeholder="At least 6 characters"></div><div id="authMessage" class="notice"></div><button id="authSubmit" class="primary full">Sign in <span>→</span></button></form>
+      <div class="switch-line"><span id="switchPrompt">New to PankieChat?</span> <button id="switchMode" class="link-btn">Create account</button></div>
+    </div>
+  </section>
+  <main id="appScreen" class="app-shell hidden">
+    <aside class="sidebar glass"><div class="side-top"><div class="brand compact"><div class="brand-mark">P</div><div><b>PankieChat</b><small>YOUR SPACE</small></div></div><button id="settingsButton" class="icon-btn" title="Profile & settings">⚙</button></div>
+      <div class="self-card"><div id="userAvatar" class="avatar big">P</div><div class="self-copy"><b id="currentUserName">User</b><span id="currentUserHandle">@username</span><small><i class="online-dot"></i> Online</small></div></div>
+      <div class="search-wrap"><span>⌕</span><input id="userSearch" placeholder="Search username..."><button id="clearSearch" class="clear-search hidden">×</button></div><div id="searchResults" class="search-results hidden"></div>
+      <div class="section-label"><span>CHATS</span><span id="chatCount">0</span></div>
+      <button id="generalChatBtn" class="chat-item general-item"><div class="avatar general-avatar">✦</div><div class="chat-copy"><strong>General</strong><span>Community room</span></div><span class="mini-badge">PUBLIC</span></button>
+      <div id="chatList" class="chat-list"><div class="sidebar-note">Search a username to start chatting.</div></div>
+      <div class="side-bottom"><span class="secure-dot"></span> End-to-end style private space <button id="logoutButton" class="link-btn">Sign out</button></div>
+    </aside>
+    <section class="conversation glass">
+      <div id="emptyState" class="empty-state"><div class="empty-logo">✦</div><h2>Your conversations</h2><p>Select a chat or search for someone to start messaging.</p></div>
+      <div id="chatView" class="chat-view hidden">
+        <header class="chat-header"><button id="backToChats" class="icon-btn back-btn">‹</button><div id="peerAvatar" class="avatar">P</div><div class="peer-copy"><b id="peerName">Chat</b><span id="peerStatus">Offline</span><small id="typingStatus"></small></div><div class="header-actions"><button id="wallpaperButton" class="icon-btn" title="Chat wallpaper">◐</button><button id="chatInfoButton" class="icon-btn" title="Chat details">ⓘ</button></div></header>
+        <div id="pinnedMessageBar" class="pinned-bar hidden"><span class="pin-symbol">📌</span><div class="pin-copy"><small>PINNED MESSAGE</small><span id="pinnedMessageText"></span></div><button id="unpinMessageBtn" class="icon-btn" title="Unpin">×</button></div>
+        <div id="messages" class="messages"></div>
+        <div id="replyPreview" class="reply-preview hidden"><div><small>Replying to</small><span id="replyText"></span></div><button id="cancelReply" class="icon-btn">×</button></div>
+        <form id="messageForm" class="composer"><label class="attach-btn" title="Attach file">＋<input id="fileInput" type="file" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.zip" hidden></label><textarea id="messageInput" rows="1" maxlength="5000" placeholder="Write a message..."></textarea><button type="button" id="locationButton" class="icon-btn" title="Share location">⌖</button><button type="button" id="recordButton" class="icon-btn" title="Record voice message">🎙</button><button id="sendButton" class="send-btn" type="submit">➤</button></form>
+      </div>
+    </section>
+  </main>
+  <div id="modalLayer" class="modal-layer hidden"><div id="modalCard" class="modal-card glass"><button id="modalClose" class="modal-close">×</button><div id="modalContent"></div></div></div>
+  <div id="toast" class="toast"></div>
+  <script type="module" src="app.js"></script>
+  <script>setTimeout(()=>{document.getElementById('splashScreen')?.classList.add('fade-out');},1300);</script>
+</body></html>
